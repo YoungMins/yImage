@@ -1,0 +1,17 @@
+/target
+**/*.rs.bk
+Cargo.lock
+*.pdb
+*.exe
+*.msi
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Large ONNX models are downloaded at build time, not committed
+assets/models/*.onnx
+!assets/models/README.md
+
+# Installer outputs
+installer/Output/
