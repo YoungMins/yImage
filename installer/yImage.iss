@@ -45,7 +45,7 @@ Name: "ctxmenu";     Description: "Add yImage to the image right-click menu"; Gr
 
 [Files]
 Source: "..\target\release\yimage.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\assets\fonts\*";            DestDir: "{app}\assets\fonts";  Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+; CJK fonts are embedded into the exe via include_bytes! — no external copy needed.
 Source: "..\assets\icons\*";            DestDir: "{app}\assets\icons";  Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "..\assets\models\*";           DestDir: "{app}\assets\models"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "..\README.md";                 DestDir: "{app}"; Flags: ignoreversion
