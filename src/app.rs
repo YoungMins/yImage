@@ -28,6 +28,20 @@ pub enum BgMsg {
     Info(String),
 }
 
+/// Optional startup action derived from CLI flags. Lets Windows Explorer's
+/// right-click verbs jump directly into a specific dialog after opening the
+/// selected file.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StartupAction {
+    #[default]
+    Open,
+    Optimize,
+    Resize,
+    Convert,
+    BackgroundRemove,
+    ObjectRemove,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct Settings {
     pub language: String,
@@ -66,10 +80,17 @@ pub struct YImageApp {
     pub texture_dirty: bool,
     pub folder_entries: Arc<Mutex<Vec<PathBuf>>>,
     pub folder_index: usize,
+    /// Action to auto-run as soon as the startup image finishes loading.
+    /// Cleared once applied so subsequent user-initiated opens don't re-trigger.
+    pub pending_action: StartupAction,
 }
 
 impl YImageApp {
-    pub fn new(cc: &CreationContext<'_>, startup_file: Option<PathBuf>) -> Self {
+    pub fn new(
+        cc: &CreationContext<'_>,
+        startup_file: Option<PathBuf>,
+        startup_action: StartupAction,
+    ) -> Self {
         let settings: Settings = cc
             .storage
             .and_then(|s| eframe::get_value::<Settings>(s, "settings"))
@@ -99,6 +120,7 @@ impl YImageApp {
             texture_dirty: false,
             folder_entries: Arc::new(Mutex::new(Vec::new())),
             folder_index: 0,
+            pending_action: startup_action,
         };
 
         if let Some(path) = startup_file {
@@ -106,6 +128,69 @@ impl YImageApp {
         }
 
         app
+    }
+
+    /// Apply a pending Explorer-shell action once the image is actually
+    /// loaded into the document. Clears `pending_action` so it only fires
+    /// once per startup.
+    fn apply_pending_action(&mut self) {
+        let action = std::mem::replace(&mut self.pending_action, StartupAction::Open);
+        match action {
+            StartupAction::Open => {}
+            StartupAction::Optimize => {
+                self.dialog.optimize_open = true;
+            }
+            StartupAction::Resize => {
+                self.dialog.resize_open = true;
+                if let Some(doc) = &self.doc {
+                    self.dialog.resize_w = doc.width();
+                    self.dialog.resize_h = doc.height();
+                }
+            }
+            StartupAction::Convert => {
+                self.dialog.convert_open = true;
+            }
+            StartupAction::BackgroundRemove => {
+                self.tool = ToolKind::BackgroundRemove;
+                self.run_background_remove();
+            }
+            StartupAction::ObjectRemove => {
+                self.tool = ToolKind::ObjectRemove;
+                self.status = self.i18n.t("obj-remove-hint", &[]);
+            }
+        }
+    }
+
+    /// Run U²-Net on the current document off the UI thread. Wired from both
+    /// the sidebar "Run" button and the `--bg-remove` startup action.
+    pub fn run_background_remove(&mut self) {
+        let Some(doc) = self.doc.as_ref() else { return };
+        let image = doc.image.clone();
+        let tx = self.tx.clone();
+        let label = self.i18n.t("tool-bg-remove", &[]);
+        let _ = tx.send(BgMsg::Progress(label.clone(), 0.1));
+        rayon::spawn(move || {
+            #[cfg(feature = "ai")]
+            match crate::tools::bg_remove::remove_background(&image) {
+                Ok(out) => {
+                    let _ = tx.send(BgMsg::ImageLoaded {
+                        path: PathBuf::new(),
+                        image: out,
+                    });
+                    let _ = tx.send(BgMsg::Progress(label, 1.0));
+                }
+                Err(e) => {
+                    let _ = tx.send(BgMsg::Error(format!("{e:#}")));
+                }
+            }
+            #[cfg(not(feature = "ai"))]
+            {
+                let _ = (image, label);
+                let _ = tx.send(BgMsg::Error(
+                    "built without the `ai` feature".to_string(),
+                ));
+            }
+        });
     }
 
     /// Load an image from disk asynchronously on a rayon worker.
@@ -166,13 +251,25 @@ impl YImageApp {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 BgMsg::ImageLoaded { path, image } => {
-                    let doc = Document::from_rgba(image, Some(path.clone()));
+                    // An empty path means "in-memory result" (e.g. bg-remove
+                    // output); preserve the existing document path in that
+                    // case so saves still go to the original file.
+                    let keep_path = if path.as_os_str().is_empty() {
+                        self.doc.as_ref().and_then(|d| d.path.clone())
+                    } else {
+                        Some(path.clone())
+                    };
+                    let doc = Document::from_rgba(image, keep_path.clone());
                     self.doc = Some(doc);
                     self.texture_dirty = true;
-                    self.status = self
-                        .i18n
-                        .t("status-loaded", &[("path", path.display().to_string())]);
+                    if let Some(p) = keep_path.as_ref() {
+                        self.status = self
+                            .i18n
+                            .t("status-loaded", &[("path", p.display().to_string())]);
+                    }
                     self.viewer.reset_view = true;
+                    self.progress = None;
+                    self.apply_pending_action();
                     ctx.request_repaint();
                 }
                 BgMsg::ImageSaved(p) => {

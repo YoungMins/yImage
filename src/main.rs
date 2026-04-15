@@ -27,7 +27,37 @@ mod ui;
 #[cfg(all(windows, feature = "capture"))]
 mod capture;
 
-use app::YImageApp;
+use app::{StartupAction, YImageApp};
+
+/// Parse command-line args into an optional startup action + file path.
+///
+/// Supported shapes (Windows Explorer shell verbs use these):
+///
+///   yimage <path>
+///   yimage --optimize   <path>
+///   yimage --resize     <path>
+///   yimage --convert    <path>
+///   yimage --bg-remove  <path>
+///   yimage --obj-remove <path>
+fn parse_cli() -> (StartupAction, Option<PathBuf>) {
+    let mut action = StartupAction::Open;
+    let mut path: Option<PathBuf> = None;
+    for arg in std::env::args_os().skip(1) {
+        let as_str = arg.to_string_lossy();
+        match as_str.as_ref() {
+            "--optimize" => action = StartupAction::Optimize,
+            "--resize" => action = StartupAction::Resize,
+            "--convert" => action = StartupAction::Convert,
+            "--bg-remove" | "--remove-bg" => action = StartupAction::BackgroundRemove,
+            "--obj-remove" | "--remove-object" => action = StartupAction::ObjectRemove,
+            s if s.starts_with("--") => {
+                // Unknown flag — ignore so future flags don't break existing shortcuts.
+            }
+            _ => path = Some(PathBuf::from(arg)),
+        }
+    }
+    (action, path)
+}
 
 /// Resolve the directory bundled assets (fonts, ONNX models, icons) live in.
 /// Installed builds look beside the executable; development builds fall back
@@ -53,7 +83,7 @@ fn main() -> eframe::Result<()> {
         )
         .try_init();
 
-    let startup_file: Option<PathBuf> = std::env::args_os().nth(1).map(PathBuf::from);
+    let (startup_action, startup_file) = parse_cli();
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -74,7 +104,11 @@ fn main() -> eframe::Result<()> {
             // first frame is fully styled.
             ui::setup_fonts(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(YImageApp::new(cc, startup_file.clone())))
+            Ok(Box::new(YImageApp::new(
+                cc,
+                startup_file.clone(),
+                startup_action,
+            )))
         }),
     )
 }

@@ -92,6 +92,47 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     }
                     ui.close_menu();
                 }
+                if ui
+                    .button(app.i18n.t("action-register-context", &[]))
+                    .clicked()
+                {
+                    let labels = crate::registry::ContextMenuLabels {
+                        root: app.i18n.t("ctx-root", &[]),
+                        open: app.i18n.t("ctx-open", &[]),
+                        optimize: app.i18n.t("ctx-optimize", &[]),
+                        resize: app.i18n.t("ctx-resize", &[]),
+                        convert: app.i18n.t("ctx-convert", &[]),
+                        bg_remove: app.i18n.t("ctx-bg-remove", &[]),
+                        obj_remove: app.i18n.t("ctx-obj-remove", &[]),
+                    };
+                    match crate::registry::register_context_menu(&labels) {
+                        Ok(_) => {
+                            let _ = app
+                                .tx
+                                .send(BgMsg::Info(app.i18n.t("status-context-ok", &[])));
+                        }
+                        Err(e) => {
+                            let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
+                        }
+                    }
+                    ui.close_menu();
+                }
+                if ui
+                    .button(app.i18n.t("action-unregister-context", &[]))
+                    .clicked()
+                {
+                    match crate::registry::unregister_context_menu() {
+                        Ok(_) => {
+                            let _ = app.tx.send(BgMsg::Info(
+                                app.i18n.t("status-context-removed", &[]),
+                            ));
+                        }
+                        Err(e) => {
+                            let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
+                        }
+                    }
+                    ui.close_menu();
+                }
                 ui.separator();
                 if ui.button(app.i18n.t("action-quit", &[])).clicked() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
