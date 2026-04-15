@@ -1,10 +1,10 @@
-// Left-hand PowerPoint-style thumbnail strip.
+// Left-hand folder thumbnail strip.
 //
 // Shows every image in the current folder as a small thumbnail so the user
-// can jump around without opening a file picker. Thumbnails are generated
-// lazily on background rayon workers and cached in an LRU-ish HashMap keyed
-// by path. The panel is resizable so users can hide it when they want more
-// screen real estate for the viewer.
+// can jump around without a file picker. Thumbnails are generated lazily on
+// background rayon workers and cached in an LRU-ish HashMap keyed by path.
+// The panel is resizable; hide it via View → Thumbnails when you want more
+// canvas space.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,14 +15,13 @@ use parking_lot::Mutex;
 
 use crate::app::YImageApp;
 
-pub const THUMB_MAX_DIM: u32 = 180;
+pub const THUMB_MAX_DIM: u32 = 160;
 
 #[derive(Default)]
 pub struct Thumbnails {
     /// Finished thumbnails keyed by path → egui texture.
     pub cache: Arc<Mutex<HashMap<PathBuf, TextureHandle>>>,
-    /// Paths that are currently being decoded on a worker so we don't
-    /// schedule duplicate jobs.
+    /// Paths currently being decoded on a worker (no duplicate jobs).
     pub pending: Arc<Mutex<HashMap<PathBuf, ()>>>,
     /// User-controlled visibility.
     pub visible: bool,
@@ -42,15 +41,17 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
     if !app.thumbs.visible {
         return;
     }
+
     egui::SidePanel::left("thumbnails")
         .resizable(true)
-        .default_width(200.0)
+        .default_width(180.0)
         .min_width(120.0)
-        .max_width(320.0)
+        .max_width(280.0)
         .show(ctx, |ui| {
+            // Header row: title + refresh button.
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.heading(app.i18n.t("thumbs-title", &[]));
+                ui.strong(app.i18n.t("thumbs-title", &[]));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .small_button("⟳")
@@ -70,13 +71,15 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
 
             let entries = app.folder_entries.lock().clone();
             if entries.is_empty() {
-                ui.label(app.i18n.t("thumbs-empty", &[]));
+                ui.add_space(8.0);
+                ui.weak(app.i18n.t("thumbs-empty", &[]));
                 return;
             }
 
             let current_path = app.doc.as_ref().and_then(|d| d.path.as_ref()).cloned();
-
             let mut nav_target: Option<PathBuf> = None;
+            let panel_w = ui.available_width();
+            let thumb_size = Vec2::splat((panel_w - 20.0).clamp(60.0, THUMB_MAX_DIM as f32));
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
@@ -85,16 +88,17 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         let is_current = current_path.as_ref() == Some(entry);
                         let tex = ensure_thumbnail(ctx, app, entry);
 
-                        let frame = egui::Frame::group(ui.style())
+                        let accent = super::theme::ACCENT;
+                        let frame = egui::Frame::none()
                             .inner_margin(egui::Margin::same(4))
                             .corner_radius(egui::CornerRadius::same(6))
                             .fill(if is_current {
-                                super::theme::ACCENT.linear_multiply(0.25)
+                                accent.linear_multiply(0.18)
                             } else {
                                 Color32::TRANSPARENT
                             })
                             .stroke(if is_current {
-                                egui::Stroke::new(1.0, super::theme::ACCENT)
+                                egui::Stroke::new(1.5, accent)
                             } else {
                                 egui::Stroke::NONE
                             });
@@ -102,36 +106,45 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         let r = frame
                             .show(ui, |ui| {
                                 ui.vertical_centered(|ui| {
-                                    let size = Vec2::splat(THUMB_MAX_DIM as f32 * 0.9);
                                     match tex {
                                         Some(t) => {
                                             ui.add(
-                                                egui::Image::new((t.id(), size))
-                                                    .fit_to_exact_size(size),
+                                                egui::Image::new((t.id(), thumb_size))
+                                                    .fit_to_exact_size(thumb_size),
                                             );
                                         }
                                         None => {
-                                            let (rect, _) =
-                                                ui.allocate_exact_size(size, egui::Sense::hover());
+                                            // Loading placeholder.
+                                            let (rect, _) = ui.allocate_exact_size(
+                                                thumb_size,
+                                                egui::Sense::hover(),
+                                            );
                                             ui.painter().rect_filled(
                                                 rect,
                                                 egui::CornerRadius::same(4),
-                                                Color32::from_rgb(0x30, 0x30, 0x30),
+                                                Color32::from_gray(0x28),
                                             );
                                             ui.painter().text(
                                                 rect.center(),
                                                 egui::Align2::CENTER_CENTER,
                                                 "…",
-                                                egui::FontId::proportional(18.0),
-                                                Color32::from_gray(160),
+                                                egui::FontId::proportional(16.0),
+                                                Color32::from_gray(100),
                                             );
                                         }
                                     }
                                     let name =
                                         entry.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                                    let text_color = if is_current {
+                                        accent
+                                    } else {
+                                        ui.visuals().text_color()
+                                    };
                                     ui.add(
-                                        egui::Label::new(egui::RichText::new(name).small())
-                                            .truncate(),
+                                        egui::Label::new(
+                                            egui::RichText::new(name).small().color(text_color),
+                                        )
+                                        .truncate(),
                                     );
                                 });
                             })
@@ -141,6 +154,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         if r.clicked() {
                             nav_target = Some(entry.clone());
                         }
+                        ui.add_space(2.0);
                     }
                 });
 
@@ -150,8 +164,8 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         });
 }
 
-/// Return the cached thumbnail for `path`, kicking off a background decode
-/// if one hasn't been started yet.
+/// Return the cached thumbnail for `path`, scheduling a background decode if
+/// one hasn't been started yet. Returns `None` while the decode is in flight.
 fn ensure_thumbnail(
     ctx: &egui::Context,
     app: &YImageApp,
@@ -164,7 +178,6 @@ fn ensure_thumbnail(
         }
     }
 
-    // Already scheduled?
     {
         let mut pending = app.thumbs.pending.lock();
         if pending.contains_key(path) {

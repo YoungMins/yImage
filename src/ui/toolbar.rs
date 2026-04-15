@@ -1,246 +1,222 @@
-// Top toolbar. Holds global actions (open / save / capture / GIF builder) and
-// tool selectors (draw, mosaic, text, shape, background-remove, object-remove,
-// gif builder).
+// Top menu bar. Holds only the drop-down menus (File / Edit / View / Lang)
+// and the Ko-fi support link. Tool selection lives in the left-hand
+// tool-palette panel (toolpanel.rs) to keep this bar uncluttered.
 
 use crate::app::{BgMsg, YImageApp};
 use crate::tools::ToolKind;
 
 pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
-    egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-        egui::menu::bar(ui, |ui| {
-            ui.menu_button(app.i18n.t("menu-file", &[]), |ui| {
-                if ui.button(app.i18n.t("action-open", &[])).clicked() {
-                    if let Some(p) = rfd::FileDialog::new()
-                        .add_filter(
-                            "images",
-                            &[
-                                "png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff", "avif",
-                            ],
+    egui::TopBottomPanel::top("toolbar")
+        .exact_height(32.0)
+        .show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button(app.i18n.t("menu-file", &[]), |ui| {
+                    if ui.button(app.i18n.t("action-open", &[])).clicked() {
+                        if let Some(p) = rfd::FileDialog::new()
+                            .add_filter(
+                                "images",
+                                &[
+                                    "png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff",
+                                    "avif",
+                                ],
+                            )
+                            .pick_file()
+                        {
+                            app.open_path(&p);
+                        }
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(
+                            app.doc.is_some(),
+                            egui::Button::new(app.i18n.t("action-save-as", &[])),
                         )
-                        .pick_file()
+                        .clicked()
                     {
-                        app.open_path(&p);
+                        app.dialog.save_dialog_open = true;
+                        ui.close_menu();
                     }
-                    ui.close_menu();
-                }
-                if ui
-                    .add_enabled(
-                        app.doc.is_some(),
-                        egui::Button::new(app.i18n.t("action-save-as", &[])),
-                    )
-                    .clicked()
-                {
-                    app.dialog.save_dialog_open = true;
-                    ui.close_menu();
-                }
-                ui.separator();
-                if ui
-                    .add_enabled(
-                        app.doc.is_some(),
-                        egui::Button::new(app.i18n.t("action-optimize", &[])),
-                    )
-                    .clicked()
-                {
-                    app.dialog.optimize_open = true;
-                    ui.close_menu();
-                }
-                if ui
-                    .add_enabled(
-                        app.doc.is_some(),
-                        egui::Button::new(app.i18n.t("action-resize", &[])),
-                    )
-                    .clicked()
-                {
-                    app.dialog.resize_open = true;
-                    if let Some(doc) = &app.doc {
-                        app.dialog.resize_w = doc.width();
-                        app.dialog.resize_h = doc.height();
-                    }
-                    ui.close_menu();
-                }
-                if ui
-                    .add_enabled(
-                        app.doc.is_some(),
-                        egui::Button::new(app.i18n.t("action-convert", &[])),
-                    )
-                    .clicked()
-                {
-                    app.dialog.convert_open = true;
-                    ui.close_menu();
-                }
-                ui.separator();
-                if ui.button(app.i18n.t("action-gif", &[])).clicked() {
-                    app.tool = ToolKind::Gif;
-                    app.dialog.gif_timeline_open = true;
-                    ui.close_menu();
-                }
-
-                // Capture submenu: fullscreen / window / region / fixed / scroll.
-                #[cfg(all(windows, feature = "capture"))]
-                capture_menu(ui, app);
-
-                ui.separator();
-                if ui.button(app.i18n.t("action-set-default", &[])).clicked() {
-                    match crate::registry::register_file_associations() {
-                        Ok(_) => {
-                            let _ = app
-                                .tx
-                                .send(BgMsg::Info(app.i18n.t("status-default-ok", &[])));
-                        }
-                        Err(e) => {
-                            let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
-                        }
-                    }
-                    ui.close_menu();
-                }
-                if ui
-                    .button(app.i18n.t("action-register-context", &[]))
-                    .clicked()
-                {
-                    let labels = crate::registry::ContextMenuLabels {
-                        root: app.i18n.t("ctx-root", &[]),
-                        open: app.i18n.t("ctx-open", &[]),
-                        optimize: app.i18n.t("ctx-optimize", &[]),
-                        resize: app.i18n.t("ctx-resize", &[]),
-                        convert: app.i18n.t("ctx-convert", &[]),
-                        bg_remove: app.i18n.t("ctx-bg-remove", &[]),
-                        obj_remove: app.i18n.t("ctx-obj-remove", &[]),
-                    };
-                    match crate::registry::register_context_menu(&labels) {
-                        Ok(_) => {
-                            let _ = app
-                                .tx
-                                .send(BgMsg::Info(app.i18n.t("status-context-ok", &[])));
-                        }
-                        Err(e) => {
-                            let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
-                        }
-                    }
-                    ui.close_menu();
-                }
-                if ui
-                    .button(app.i18n.t("action-unregister-context", &[]))
-                    .clicked()
-                {
-                    match crate::registry::unregister_context_menu() {
-                        Ok(_) => {
-                            let _ = app
-                                .tx
-                                .send(BgMsg::Info(app.i18n.t("status-context-removed", &[])));
-                        }
-                        Err(e) => {
-                            let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
-                        }
-                    }
-                    ui.close_menu();
-                }
-                ui.separator();
-                if ui.button(app.i18n.t("action-quit", &[])).clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            });
-
-            ui.menu_button(app.i18n.t("menu-edit", &[]), |ui| {
-                if ui.button(app.i18n.t("action-undo", &[])).clicked() {
-                    if let Some(doc) = app.doc.as_mut() {
-                        if doc.undo() {
-                            app.texture_dirty = true;
-                        }
-                    }
-                    ui.close_menu();
-                }
-                if ui.button(app.i18n.t("action-redo", &[])).clicked() {
-                    if let Some(doc) = app.doc.as_mut() {
-                        if doc.redo() {
-                            app.texture_dirty = true;
-                        }
-                    }
-                    ui.close_menu();
-                }
-            });
-
-            ui.menu_button(app.i18n.t("menu-view", &[]), |ui| {
-                if ui.button(app.i18n.t("action-fit", &[])).clicked() {
-                    app.viewer.reset_view = true;
-                    ui.close_menu();
-                }
-                if ui.button(app.i18n.t("action-zoom-100", &[])).clicked() {
-                    app.viewer.zoom = 1.0;
-                    ui.close_menu();
-                }
-                ui.separator();
-                let mut show_thumbs = app.thumbs.visible;
-                if ui
-                    .checkbox(&mut show_thumbs, app.i18n.t("view-thumbnails", &[]))
-                    .changed()
-                {
-                    app.thumbs.visible = show_thumbs;
-                }
-                ui.separator();
-                let mut dark = app.settings.theme_dark;
-                if ui
-                    .checkbox(&mut dark, app.i18n.t("view-dark-theme", &[]))
-                    .changed()
-                {
-                    app.settings.theme_dark = dark;
-                    if dark {
-                        crate::ui::theme::apply_dark(ctx);
-                    } else {
-                        crate::ui::theme::apply_light(ctx);
-                    }
-                }
-                #[cfg(all(windows, feature = "capture"))]
-                {
                     ui.separator();
-                    if ui.button(app.i18n.t("menu-hotkeys", &[])).clicked() {
-                        app.dialog.hotkeys_open = true;
+                    if ui
+                        .add_enabled(
+                            app.doc.is_some(),
+                            egui::Button::new(app.i18n.t("action-optimize", &[])),
+                        )
+                        .clicked()
+                    {
+                        app.dialog.optimize_open = true;
                         ui.close_menu();
                     }
-                }
-            });
-
-            ui.menu_button(app.i18n.t("menu-lang", &[]), |ui| {
-                for lang in ["en-US", "ko-KR", "ja-JP"] {
-                    if ui.button(lang).clicked() {
-                        app.settings.language = lang.to_string();
-                        app.i18n = crate::i18n::I18n::new(lang);
+                    if ui
+                        .add_enabled(
+                            app.doc.is_some(),
+                            egui::Button::new(app.i18n.t("action-resize", &[])),
+                        )
+                        .clicked()
+                    {
+                        app.dialog.resize_open = true;
+                        if let Some(doc) = &app.doc {
+                            app.dialog.resize_w = doc.width();
+                            app.dialog.resize_h = doc.height();
+                        }
                         ui.close_menu();
                     }
-                }
-            });
+                    if ui
+                        .add_enabled(
+                            app.doc.is_some(),
+                            egui::Button::new(app.i18n.t("action-convert", &[])),
+                        )
+                        .clicked()
+                    {
+                        app.dialog.convert_open = true;
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button(app.i18n.t("action-gif", &[])).clicked() {
+                        app.tool = ToolKind::Gif;
+                        app.dialog.gif_timeline_open = true;
+                        ui.close_menu();
+                    }
 
-            ui.separator();
+                    // Capture submenu: fullscreen / window / region / fixed / scroll.
+                    #[cfg(all(windows, feature = "capture"))]
+                    capture_menu(ui, app);
 
-            ui.selectable_value(&mut app.tool, ToolKind::None, app.i18n.t("tool-none", &[]));
-            ui.selectable_value(&mut app.tool, ToolKind::Draw, app.i18n.t("tool-draw", &[]));
-            ui.selectable_value(
-                &mut app.tool,
-                ToolKind::Mosaic,
-                app.i18n.t("tool-mosaic", &[]),
-            );
-            ui.selectable_value(&mut app.tool, ToolKind::Text, app.i18n.t("tool-text", &[]));
-            ui.selectable_value(
-                &mut app.tool,
-                ToolKind::Shape,
-                app.i18n.t("tool-shape", &[]),
-            );
-            ui.selectable_value(
-                &mut app.tool,
-                ToolKind::BackgroundRemove,
-                app.i18n.t("tool-bg-remove", &[]),
-            );
-            ui.selectable_value(
-                &mut app.tool,
-                ToolKind::ObjectRemove,
-                app.i18n.t("tool-obj-remove", &[]),
-            );
-            ui.selectable_value(&mut app.tool, ToolKind::Gif, app.i18n.t("tool-gif", &[]));
+                    ui.separator();
+                    if ui.button(app.i18n.t("action-set-default", &[])).clicked() {
+                        match crate::registry::register_file_associations() {
+                            Ok(_) => {
+                                let _ = app
+                                    .tx
+                                    .send(BgMsg::Info(app.i18n.t("status-default-ok", &[])));
+                            }
+                            Err(e) => {
+                                let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
+                            }
+                        }
+                        ui.close_menu();
+                    }
+                    if ui
+                        .button(app.i18n.t("action-register-context", &[]))
+                        .clicked()
+                    {
+                        let labels = crate::registry::ContextMenuLabels {
+                            root: app.i18n.t("ctx-root", &[]),
+                            open: app.i18n.t("ctx-open", &[]),
+                            optimize: app.i18n.t("ctx-optimize", &[]),
+                            resize: app.i18n.t("ctx-resize", &[]),
+                            convert: app.i18n.t("ctx-convert", &[]),
+                            bg_remove: app.i18n.t("ctx-bg-remove", &[]),
+                            obj_remove: app.i18n.t("ctx-obj-remove", &[]),
+                        };
+                        match crate::registry::register_context_menu(&labels) {
+                            Ok(_) => {
+                                let _ = app
+                                    .tx
+                                    .send(BgMsg::Info(app.i18n.t("status-context-ok", &[])));
+                            }
+                            Err(e) => {
+                                let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
+                            }
+                        }
+                        ui.close_menu();
+                    }
+                    if ui
+                        .button(app.i18n.t("action-unregister-context", &[]))
+                        .clicked()
+                    {
+                        match crate::registry::unregister_context_menu() {
+                            Ok(_) => {
+                                let _ = app
+                                    .tx
+                                    .send(BgMsg::Info(app.i18n.t("status-context-removed", &[])));
+                            }
+                            Err(e) => {
+                                let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
+                            }
+                        }
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button(app.i18n.t("action-quit", &[])).clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.hyperlink_to("\u{2764} Ko-fi", "https://ko-fi.com/youngminkim");
+                ui.menu_button(app.i18n.t("menu-edit", &[]), |ui| {
+                    if ui.button(app.i18n.t("action-undo", &[])).clicked() {
+                        if let Some(doc) = app.doc.as_mut() {
+                            if doc.undo() {
+                                app.texture_dirty = true;
+                            }
+                        }
+                        ui.close_menu();
+                    }
+                    if ui.button(app.i18n.t("action-redo", &[])).clicked() {
+                        if let Some(doc) = app.doc.as_mut() {
+                            if doc.redo() {
+                                app.texture_dirty = true;
+                            }
+                        }
+                        ui.close_menu();
+                    }
+                });
+
+                ui.menu_button(app.i18n.t("menu-view", &[]), |ui| {
+                    if ui.button(app.i18n.t("action-fit", &[])).clicked() {
+                        app.viewer.reset_view = true;
+                        ui.close_menu();
+                    }
+                    if ui.button(app.i18n.t("action-zoom-100", &[])).clicked() {
+                        app.viewer.zoom = 1.0;
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    let mut show_thumbs = app.thumbs.visible;
+                    if ui
+                        .checkbox(&mut show_thumbs, app.i18n.t("view-thumbnails", &[]))
+                        .changed()
+                    {
+                        app.thumbs.visible = show_thumbs;
+                    }
+                    ui.separator();
+                    let mut dark = app.settings.theme_dark;
+                    if ui
+                        .checkbox(&mut dark, app.i18n.t("view-dark-theme", &[]))
+                        .changed()
+                    {
+                        app.settings.theme_dark = dark;
+                        if dark {
+                            crate::ui::theme::apply_dark(ctx);
+                        } else {
+                            crate::ui::theme::apply_light(ctx);
+                        }
+                    }
+                    #[cfg(all(windows, feature = "capture"))]
+                    {
+                        ui.separator();
+                        if ui.button(app.i18n.t("menu-hotkeys", &[])).clicked() {
+                            app.dialog.hotkeys_open = true;
+                            ui.close_menu();
+                        }
+                    }
+                });
+
+                ui.menu_button(app.i18n.t("menu-lang", &[]), |ui| {
+                    for lang in ["en-US", "ko-KR", "ja-JP"] {
+                        if ui.button(lang).clicked() {
+                            app.settings.language = lang.to_string();
+                            app.i18n = crate::i18n::I18n::new(lang);
+                            ui.close_menu();
+                        }
+                    }
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.hyperlink_to("\u{2764} Ko-fi", "https://ko-fi.com/youngminkim");
+                });
             });
         });
-    });
 }
 
 #[cfg(all(windows, feature = "capture"))]

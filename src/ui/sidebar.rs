@@ -2,9 +2,7 @@
 //
 // Shows exhaustive information about the current image (dimensions, aspect,
 // colour channels, estimated memory, path, file size + mtime when available),
-// plus the parameter block for whichever tool is currently active. The panel
-// was previously named "Tool Options"; it is now the home for all document
-// metadata so users have a single place to look.
+// plus the parameter block for whichever tool is currently active.
 
 use crate::app::YImageApp;
 use crate::tools::ToolKind;
@@ -12,22 +10,29 @@ use crate::tools::ToolKind;
 pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
     egui::SidePanel::right("inspector")
         .resizable(true)
-        .default_width(280.0)
-        .min_width(240.0)
+        .default_width(260.0)
+        .min_width(220.0)
+        .max_width(340.0)
         .show(ctx, |ui| {
             ui.add_space(4.0);
-            ui.heading(app.i18n.t("inspector-title", &[]));
+            ui.strong(app.i18n.t("inspector-title", &[]));
             ui.separator();
 
-            show_image_properties(ui, app);
-            ui.separator();
-            show_tool_section(ui, app);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    show_image_properties(ui, app);
+                    ui.add_space(4.0);
+                    ui.separator();
+                    show_tool_section(ui, app);
 
-            ui.separator();
-            if let Some((label, v)) = &app.progress {
-                ui.label(label);
-                ui.add(egui::ProgressBar::new(*v).show_percentage());
-            }
+                    if let Some((label, v)) = &app.progress {
+                        ui.add_space(4.0);
+                        ui.separator();
+                        ui.small(label);
+                        ui.add(egui::ProgressBar::new(*v).show_percentage());
+                    }
+                });
         });
 }
 
@@ -36,7 +41,7 @@ fn show_image_properties(ui: &mut egui::Ui, app: &YImageApp) {
         .default_open(true)
         .show(ui, |ui| {
             let Some(doc) = &app.doc else {
-                ui.label(app.i18n.t("sidebar-empty", &[]));
+                ui.weak(app.i18n.t("sidebar-empty", &[]));
                 return;
             };
             let w = doc.width();
@@ -46,52 +51,63 @@ fn show_image_properties(ui: &mut egui::Ui, app: &YImageApp) {
 
             egui::Grid::new("props-grid")
                 .num_columns(2)
-                .spacing([12.0, 4.0])
+                .spacing([8.0, 3.0])
                 .striped(true)
                 .show(ui, |ui| {
-                    ui.label(app.i18n.t("prop-dimensions", &[]));
-                    ui.label(format!("{} × {} px", w, h));
-                    ui.end_row();
-
-                    ui.label(app.i18n.t("prop-megapixels", &[]));
-                    ui.label(format!("{:.2} MP", total_px as f64 / 1_000_000.0));
-                    ui.end_row();
-
-                    ui.label(app.i18n.t("prop-aspect", &[]));
-                    ui.label(aspect_ratio_string(w, h));
-                    ui.end_row();
-
-                    ui.label(app.i18n.t("prop-channels", &[]));
-                    ui.label("RGBA 8-bit");
-                    ui.end_row();
-
-                    ui.label(app.i18n.t("prop-memory", &[]));
-                    ui.label(format!("{:.2} MB", est_mem_mb));
-                    ui.end_row();
+                    prop_row(
+                        ui,
+                        app.i18n.t("prop-dimensions", &[]),
+                        format!("{w} × {h} px"),
+                    );
+                    prop_row(
+                        ui,
+                        app.i18n.t("prop-megapixels", &[]),
+                        format!("{:.2} MP", total_px as f64 / 1_000_000.0),
+                    );
+                    prop_row(
+                        ui,
+                        app.i18n.t("prop-aspect", &[]),
+                        aspect_ratio_string(w, h),
+                    );
+                    prop_row(
+                        ui,
+                        app.i18n.t("prop-channels", &[]),
+                        "RGBA 8-bit".to_string(),
+                    );
+                    prop_row(
+                        ui,
+                        app.i18n.t("prop-memory", &[]),
+                        format!("{est_mem_mb:.2} MB"),
+                    );
 
                     if let Some(path) = &doc.path {
-                        ui.label(app.i18n.t("prop-format", &[]));
                         let ext = path
                             .extension()
                             .and_then(|s| s.to_str())
                             .unwrap_or("")
                             .to_ascii_uppercase();
-                        ui.label(if ext.is_empty() {
-                            "—".to_string()
-                        } else {
-                            ext
-                        });
-                        ui.end_row();
+                        prop_row(
+                            ui,
+                            app.i18n.t("prop-format", &[]),
+                            if ext.is_empty() {
+                                "—".to_string()
+                            } else {
+                                ext
+                            },
+                        );
 
                         if let Ok(meta) = std::fs::metadata(path) {
-                            ui.label(app.i18n.t("prop-file-size", &[]));
-                            ui.label(format_bytes(meta.len()));
-                            ui.end_row();
-
+                            prop_row(
+                                ui,
+                                app.i18n.t("prop-file-size", &[]),
+                                format_bytes(meta.len()),
+                            );
                             if let Ok(modified) = meta.modified() {
-                                ui.label(app.i18n.t("prop-modified", &[]));
-                                ui.label(format_time(modified));
-                                ui.end_row();
+                                prop_row(
+                                    ui,
+                                    app.i18n.t("prop-modified", &[]),
+                                    format_time(modified),
+                                );
                             }
                         }
                     }
@@ -99,7 +115,7 @@ fn show_image_properties(ui: &mut egui::Ui, app: &YImageApp) {
 
             if let Some(path) = &doc.path {
                 ui.add_space(4.0);
-                ui.label(app.i18n.t("prop-path", &[]));
+                ui.weak(app.i18n.t("prop-path", &[]));
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(path.display().to_string())
@@ -112,11 +128,15 @@ fn show_image_properties(ui: &mut egui::Ui, app: &YImageApp) {
         });
 }
 
+/// Emit a two-column property row and advance the grid.
+fn prop_row(ui: &mut egui::Ui, label: String, value: String) {
+    ui.weak(label);
+    ui.label(value);
+    ui.end_row();
+}
+
 fn show_tool_section(ui: &mut egui::Ui, app: &mut YImageApp) {
-    let title = match app.tool {
-        ToolKind::None => app.i18n.t("inspector-no-tool", &[]),
-        _ => app.i18n.t("inspector-tool", &[]),
-    };
+    let title = app.i18n.t("inspector-tool", &[]);
     egui::CollapsingHeader::new(title)
         .default_open(true)
         .show(ui, |ui| match app.tool {
@@ -128,13 +148,12 @@ fn show_tool_section(ui: &mut egui::Ui, app: &mut YImageApp) {
             ToolKind::ObjectRemove => obj_remove_panel(ui, app),
             ToolKind::Gif => gif_panel(ui, app),
             ToolKind::None => {
-                ui.label(app.i18n.t("inspector-pick-tool", &[]));
+                ui.weak(app.i18n.t("inspector-pick-tool", &[]));
             }
         });
 }
 
 fn draw_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
-    ui.label(app.i18n.t("tool-draw", &[]));
     ui.add(
         egui::Slider::new(&mut app.dialog.brush.radius, 1.0..=128.0)
             .text(app.i18n.t("brush-size", &[])),
@@ -143,22 +162,24 @@ fn draw_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
         egui::Slider::new(&mut app.dialog.brush.hardness, 0.0..=1.0)
             .text(app.i18n.t("brush-hardness", &[])),
     );
-    let mut color = egui::Color32::from_rgba_unmultiplied(
-        app.dialog.brush.color[0],
-        app.dialog.brush.color[1],
-        app.dialog.brush.color[2],
-        app.dialog.brush.color[3],
-    );
-    if egui::color_picker::color_edit_button_srgba(
-        ui,
-        &mut color,
-        egui::color_picker::Alpha::Opaque,
-    )
-    .changed()
-    {
-        app.dialog.brush.color = [color.r(), color.g(), color.b(), color.a()];
-    }
-    // Eraser toggle
+    ui.horizontal(|ui| {
+        ui.label(app.i18n.t("brush-color", &[]));
+        let mut color = egui::Color32::from_rgba_unmultiplied(
+            app.dialog.brush.color[0],
+            app.dialog.brush.color[1],
+            app.dialog.brush.color[2],
+            app.dialog.brush.color[3],
+        );
+        if egui::color_picker::color_edit_button_srgba(
+            ui,
+            &mut color,
+            egui::color_picker::Alpha::Opaque,
+        )
+        .changed()
+        {
+            app.dialog.brush.color = [color.r(), color.g(), color.b(), color.a()];
+        }
+    });
     ui.checkbox(
         &mut app.dialog.brush.eraser,
         app.i18n.t("brush-eraser", &[]),
@@ -166,16 +187,14 @@ fn draw_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
 }
 
 fn mosaic_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
-    ui.label(app.i18n.t("tool-mosaic", &[]));
     ui.add(
         egui::Slider::new(&mut app.dialog.mosaic.block_size, 2..=128)
             .text(app.i18n.t("mosaic-block-size", &[])),
     );
-    ui.label(app.i18n.t("mosaic-hint", &[]));
+    ui.weak(app.i18n.t("mosaic-hint", &[]));
 }
 
 fn text_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
-    ui.label(app.i18n.t("tool-text", &[]));
     ui.add(
         egui::TextEdit::multiline(&mut app.dialog.text.content)
             .hint_text(app.i18n.t("text-hint", &[]))
@@ -185,27 +204,29 @@ fn text_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
         egui::Slider::new(&mut app.dialog.text.font_size, 8.0..=256.0)
             .text(app.i18n.t("text-size", &[])),
     );
-    let mut color = egui::Color32::from_rgba_unmultiplied(
-        app.dialog.text.color[0],
-        app.dialog.text.color[1],
-        app.dialog.text.color[2],
-        app.dialog.text.color[3],
-    );
-    if egui::color_picker::color_edit_button_srgba(
-        ui,
-        &mut color,
-        egui::color_picker::Alpha::Opaque,
-    )
-    .changed()
-    {
-        app.dialog.text.color = [color.r(), color.g(), color.b(), color.a()];
-    }
-    ui.label(app.i18n.t("text-click-hint", &[]));
+    ui.horizontal(|ui| {
+        ui.label(app.i18n.t("brush-color", &[]));
+        let mut color = egui::Color32::from_rgba_unmultiplied(
+            app.dialog.text.color[0],
+            app.dialog.text.color[1],
+            app.dialog.text.color[2],
+            app.dialog.text.color[3],
+        );
+        if egui::color_picker::color_edit_button_srgba(
+            ui,
+            &mut color,
+            egui::color_picker::Alpha::Opaque,
+        )
+        .changed()
+        {
+            app.dialog.text.color = [color.r(), color.g(), color.b(), color.a()];
+        }
+    });
+    ui.weak(app.i18n.t("text-click-hint", &[]));
 }
 
 fn shape_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
     use crate::tools::draw::ShapeKind;
-    ui.label(app.i18n.t("tool-shape", &[]));
     egui::ComboBox::from_label(app.i18n.t("shape-kind", &[]))
         .selected_text(shape_name(app.dialog.shape.kind, &app.i18n))
         .show_ui(ui, |ui| {
@@ -228,21 +249,24 @@ fn shape_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
         egui::Slider::new(&mut app.dialog.shape.stroke, 1.0..=32.0)
             .text(app.i18n.t("shape-stroke", &[])),
     );
-    let mut color = egui::Color32::from_rgba_unmultiplied(
-        app.dialog.shape.color[0],
-        app.dialog.shape.color[1],
-        app.dialog.shape.color[2],
-        app.dialog.shape.color[3],
-    );
-    if egui::color_picker::color_edit_button_srgba(
-        ui,
-        &mut color,
-        egui::color_picker::Alpha::Opaque,
-    )
-    .changed()
-    {
-        app.dialog.shape.color = [color.r(), color.g(), color.b(), color.a()];
-    }
+    ui.horizontal(|ui| {
+        ui.label(app.i18n.t("brush-color", &[]));
+        let mut color = egui::Color32::from_rgba_unmultiplied(
+            app.dialog.shape.color[0],
+            app.dialog.shape.color[1],
+            app.dialog.shape.color[2],
+            app.dialog.shape.color[3],
+        );
+        if egui::color_picker::color_edit_button_srgba(
+            ui,
+            &mut color,
+            egui::color_picker::Alpha::Opaque,
+        )
+        .changed()
+        {
+            app.dialog.shape.color = [color.r(), color.g(), color.b(), color.a()];
+        }
+    });
 }
 
 fn shape_name(kind: crate::tools::draw::ShapeKind, i18n: &crate::i18n::I18n) -> String {
@@ -258,8 +282,8 @@ fn shape_name(kind: crate::tools::draw::ShapeKind, i18n: &crate::i18n::I18n) -> 
 }
 
 fn bg_remove_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
-    ui.label(app.i18n.t("tool-bg-remove", &[]));
-    ui.label(app.i18n.t("bg-remove-hint", &[]));
+    ui.weak(app.i18n.t("bg-remove-hint", &[]));
+    ui.add_space(4.0);
     let status = crate::models::check(crate::models::ModelKind::BgRemove);
     show_model_status(ui, app, &status, crate::models::ModelKind::BgRemove);
     if status.ready
@@ -275,23 +299,25 @@ fn bg_remove_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
 }
 
 fn obj_remove_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
-    ui.label(app.i18n.t("tool-obj-remove", &[]));
-    ui.label(app.i18n.t("obj-remove-hint", &[]));
+    ui.weak(app.i18n.t("obj-remove-hint", &[]));
+    ui.add_space(4.0);
     let status = crate::models::check(crate::models::ModelKind::ObjRemove);
     show_model_status(ui, app, &status, crate::models::ModelKind::ObjRemove);
     if status.ready {
-        if ui.button(app.i18n.t("action-clear-mask", &[])).clicked() {
-            app.dialog.obj_mask = None;
-        }
-        if ui
-            .add_enabled(
-                app.doc.is_some() && app.dialog.obj_mask.is_some(),
-                egui::Button::new(app.i18n.t("action-run", &[])),
-            )
-            .clicked()
-        {
-            app.run_object_remove();
-        }
+        ui.horizontal(|ui| {
+            if ui.button(app.i18n.t("action-clear-mask", &[])).clicked() {
+                app.dialog.obj_mask = None;
+            }
+            if ui
+                .add_enabled(
+                    app.doc.is_some() && app.dialog.obj_mask.is_some(),
+                    egui::Button::new(app.i18n.t("action-run", &[])),
+                )
+                .clicked()
+            {
+                app.run_object_remove();
+            }
+        });
     }
 }
 
@@ -301,7 +327,6 @@ fn show_model_status(
     status: &crate::models::ModelStatus,
     kind: crate::models::ModelKind,
 ) {
-    ui.add_space(4.0);
     if status.ready {
         ui.colored_label(
             super::theme::ACCENT,
@@ -313,12 +338,18 @@ fn show_model_status(
             egui::Color32::from_rgb(0xE8, 0xA0, 0x40),
             app.i18n.t("model-missing", &[]),
         );
-        ui.label(
-            egui::RichText::new(status.path.display().to_string())
-                .monospace()
-                .small(),
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(status.path.display().to_string())
+                    .monospace()
+                    .small(),
+            )
+            .wrap(),
         );
         if app.download_state(kind).in_progress {
+            if let Some(msg) = &app.download_state(kind).message {
+                ui.weak(msg.clone());
+            }
             let p = app.download_state(kind).progress;
             ui.add(egui::ProgressBar::new(p).show_percentage());
         } else if ui
@@ -328,11 +359,12 @@ fn show_model_status(
             app.download_model(kind);
         }
     }
+    ui.add_space(4.0);
 }
 
 fn gif_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
-    ui.label(app.i18n.t("tool-gif", &[]));
-    ui.label(app.i18n.t("gif-open-builder-hint", &[]));
+    ui.weak(app.i18n.t("gif-open-builder-hint", &[]));
+    ui.add_space(4.0);
     if ui.button(app.i18n.t("gif-open-builder", &[])).clicked() {
         app.dialog.gif_timeline_open = true;
     }
@@ -350,7 +382,7 @@ fn aspect_ratio_string(w: u32, h: u32) -> String {
         a.max(1)
     };
     format!(
-        "{}:{}  ({:.3})",
+        "{}:{} ({:.3})",
         w / gcd,
         h / gcd,
         w as f32 / h.max(1) as f32
@@ -376,7 +408,6 @@ fn format_time(t: std::time::SystemTime) -> String {
     match t.duration_since(std::time::UNIX_EPOCH) {
         Ok(d) => {
             let secs = d.as_secs() as i64;
-            // Naive YYYY-MM-DD HH:MM — avoids a chrono dependency.
             let (y, mo, d, h, mi) = civil_from_unix(secs);
             format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}")
         }

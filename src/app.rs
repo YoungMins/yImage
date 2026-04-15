@@ -507,10 +507,17 @@ impl eframe::App for YImageApp {
             self.open_path(&path);
         }
 
+        // Declaration order matters for egui panel layout:
+        // 1. Top panel  → occupies full width at top.
+        // 2. Bottom panel → occupies full width at bottom (must come before side panels).
+        // 3. Left side panels (outermost → innermost, i.e. tool rail first, then thumbnails).
+        // 4. Right side panel.
+        // 5. CentralPanel → fills whatever remains.
         ui::toolbar::show(&ctx, self);
+        ui::statusbar::show(&ctx, self);
+        ui::toolpanel::show(&ctx, self);
         ui::thumbnails::show(&ctx, self);
         ui::sidebar::show(&ctx, self);
-        ui::statusbar::show(&ctx, self);
         ui::viewer::show(&ctx, self);
         ui::dialogs::show(&ctx, self);
     }

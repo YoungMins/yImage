@@ -5,6 +5,7 @@ pub mod statusbar;
 pub mod theme;
 pub mod thumbnails;
 pub mod toolbar;
+pub mod toolpanel;
 pub mod viewer;
 
 // Noto Sans CJK JP (Regular) is embedded directly into the binary so the

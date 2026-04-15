@@ -17,24 +17,55 @@ pub struct ViewerState {
 pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
     egui::CentralPanel::default().show(ctx, |ui| {
         if app.doc.is_none() {
-            ui.vertical_centered(|ui| {
-                ui.add_space(120.0);
-                ui.heading("yImage");
-                ui.label(app.i18n.t("welcome-open", &[]));
-                if ui.button(app.i18n.t("action-open", &[])).clicked() {
-                    if let Some(p) = rfd::FileDialog::new()
-                        .add_filter(
-                            "images",
-                            &[
-                                "png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff", "avif",
-                            ],
-                        )
-                        .pick_file()
-                    {
-                        app.open_path(&p);
-                    }
-                }
-            });
+            let avail = ui.available_size();
+            ui.allocate_ui_at_rect(
+                egui::Rect::from_center_size(
+                    ui.max_rect().center(),
+                    egui::Vec2::new(360.0, avail.y),
+                ),
+                |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(avail.y * 0.3);
+                        ui.label(
+                            egui::RichText::new("yImage")
+                                .size(32.0)
+                                .color(egui::Color32::from_gray(120)),
+                        );
+                        ui.add_space(8.0);
+                        ui.weak(app.i18n.t("welcome-open", &[]));
+                        ui.add_space(16.0);
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(format!(
+                                        "  {}  ",
+                                        app.i18n.t("action-open", &[])
+                                    ))
+                                    .size(14.0),
+                                )
+                                .min_size(egui::Vec2::new(140.0, 36.0))
+                                .fill(super::theme::ACCENT),
+                            )
+                            .clicked()
+                        {
+                            if let Some(p) = rfd::FileDialog::new()
+                                .add_filter(
+                                    "images",
+                                    &[
+                                        "png", "jpg", "jpeg", "webp", "bmp", "gif", "tif",
+                                        "tiff", "avif",
+                                    ],
+                                )
+                                .pick_file()
+                            {
+                                app.open_path(&p);
+                            }
+                        }
+                        ui.add_space(8.0);
+                        ui.weak("or drag & drop an image");
+                    });
+                },
+            );
             return;
         }
 
