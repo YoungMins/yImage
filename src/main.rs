@@ -19,6 +19,7 @@ mod app;
 mod document;
 mod i18n;
 mod io;
+mod models;
 mod ops;
 mod registry;
 mod tools;
@@ -26,6 +27,8 @@ mod ui;
 
 #[cfg(all(windows, feature = "capture"))]
 mod capture;
+#[cfg(all(windows, feature = "capture"))]
+mod hotkeys;
 
 use app::{StartupAction, YImageApp};
 
@@ -103,6 +106,7 @@ fn main() -> eframe::Result<()> {
             // Install CJK-capable font, theme, and image loaders up-front so the
             // first frame is fully styled.
             ui::setup_fonts(&cc.egui_ctx);
+            ui::theme::apply_dark(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(YImageApp::new(
                 cc,

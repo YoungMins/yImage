@@ -47,6 +47,7 @@ fn get_session() -> Result<&'static parking_lot::Mutex<Session>> {
 }
 
 #[cfg(feature = "ai")]
+#[allow(clippy::erasing_op, clippy::identity_op)]
 pub fn inpaint(image: &RgbaImage, mask: &GrayImage) -> Result<RgbaImage> {
     use crate::ops::resize::{resize_rgba, Filter};
     use ort::value::{Shape, Tensor};
@@ -89,8 +90,11 @@ pub fn inpaint(image: &RgbaImage, mask: &GrayImage) -> Result<RgbaImage> {
     let sess_mutex = get_session()?;
     let mut session = sess_mutex.lock();
 
-    let input_names: Vec<String> =
-        session.inputs().iter().map(|i| i.name().to_string()).collect();
+    let input_names: Vec<String> = session
+        .inputs()
+        .iter()
+        .map(|i| i.name().to_string())
+        .collect();
     anyhow::ensure!(
         input_names.len() >= 2,
         "lama model expects image+mask inputs (got {})",

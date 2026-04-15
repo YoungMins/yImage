@@ -51,11 +51,7 @@ pub fn kind_from_path(path: &Path) -> Option<OptKind> {
     }
 }
 
-pub fn optimize_to(
-    image: &RgbaImage,
-    dest: &Path,
-    opts: &OptimizeOptions,
-) -> Result<u64> {
+pub fn optimize_to(image: &RgbaImage, dest: &Path, opts: &OptimizeOptions) -> Result<u64> {
     let kind = kind_from_path(dest).ok_or_else(|| anyhow!("unsupported output format"))?;
     match kind {
         OptKind::Png => optimize_png(image, dest, opts.png_level),
@@ -86,8 +82,7 @@ fn optimize_png(image: &RgbaImage, dest: &Path, level: u8) -> Result<u64> {
     oxi_opts.strip = oxipng::StripChunks::Safe;
     oxi_opts.optimize_alpha = true;
 
-    let optimised = oxipng::optimize_from_memory(&initial, &oxi_opts)
-        .context("oxipng optimise")?;
+    let optimised = oxipng::optimize_from_memory(&initial, &oxi_opts).context("oxipng optimise")?;
     std::fs::write(dest, &optimised).context("write optimised png")?;
     Ok(optimised.len() as u64)
 }

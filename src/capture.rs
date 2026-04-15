@@ -1,18 +1,32 @@
-// Windows screen capture using the Windows Graphics Capture (WGC) API via the
-// `windows-capture` crate. WGC is the fastest, DWM-aware path on Windows 10
-// 1903+: zero-copy from the compositor, no black overlays on protected
-// content, and properly HDR-aware.
+// Windows screen capture.
 //
-// For the MVP we expose a blocking `capture_primary_screen()` that grabs a
-// single frame from the primary monitor. Window-picker and region selection
-// will be layered on top in follow-ups.
+// Uses the Windows Graphics Capture (WGC) API via the `windows-capture` crate
+// for fullscreen / window captures (zero-copy from the compositor, DWM-aware,
+// HDR-aware on Windows 11). Region captures go through WGC then crop.
+//
+// Five capture modes are exposed:
+//
+//   * `CaptureMode::Fullscreen` — primary monitor, single frame.
+//   * `CaptureMode::ActiveWindow` — the foreground window at the moment the
+//      hotkey fires.
+//   * `CaptureMode::Region` — interactive rectangle: we fullscreen-capture the
+//      primary monitor and return it so the UI thread can present a crop
+//      overlay to let the user pick a rectangle.
+//   * `CaptureMode::FixedRegion { x, y, w, h }` — rectangle pinned from a
+//      previous session / user setting, cropped out of a fullscreen capture.
+//   * `CaptureMode::AutoScroll { ... }` — captures a scrolling window by
+//      repeatedly snapping, sending PgDn, and stitching the vertical deltas.
+//
+// Each blocking `capture_*` function can safely be called from a background
+// rayon worker; the UI thread is never blocked.
 
 #![cfg(windows)]
 
 use anyhow::{Context, Result};
-use image::RgbaImage;
+use image::{GenericImage, RgbaImage};
 use parking_lot::Mutex;
 use std::sync::Arc;
+use std::time::Duration;
 
 use windows_capture::{
     capture::{Context as CapContext, GraphicsCaptureApiHandler},
@@ -23,7 +37,19 @@ use windows_capture::{
         ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
         MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
     },
+    window::Window,
 };
+
+/// One of the user-facing capture modes. The UI surfaces the first four
+/// directly; `AutoScroll` is triggered via the dedicated menu entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureMode {
+    Fullscreen,
+    ActiveWindow,
+    Region,
+    FixedRegion { x: i32, y: i32, w: u32, h: u32 },
+    AutoScroll,
+}
 
 struct Grabber {
     output: Arc<Mutex<Option<RgbaImage>>>,
@@ -46,7 +72,6 @@ impl GraphicsCaptureApiHandler for Grabber {
         let width = buf.width();
         let height = buf.height();
         let data = buf.as_nopadding_buffer()?;
-        // The buffer comes back as BGRA8; swizzle to RGBA8 while copying.
         let mut rgba = Vec::with_capacity(data.len());
         for chunk in data.chunks_exact(4) {
             rgba.push(chunk[2]);
@@ -66,6 +91,7 @@ impl GraphicsCaptureApiHandler for Grabber {
     }
 }
 
+/// Capture the primary monitor in one frame.
 pub fn capture_primary_screen() -> Result<RgbaImage> {
     let monitor = Monitor::primary().context("get primary monitor")?;
     let output: Arc<Mutex<Option<RgbaImage>>> = Arc::new(Mutex::new(None));
@@ -85,4 +111,168 @@ pub fn capture_primary_screen() -> Result<RgbaImage> {
 
     let frame = output.lock().take();
     frame.context("capture ended with no frame")
+}
+
+/// Capture the current foreground window.
+pub fn capture_active_window() -> Result<RgbaImage> {
+    let window = Window::foreground().context("get foreground window")?;
+    let output: Arc<Mutex<Option<RgbaImage>>> = Arc::new(Mutex::new(None));
+
+    let settings = Settings::new(
+        window,
+        CursorCaptureSettings::Default,
+        DrawBorderSettings::Default,
+        SecondaryWindowSettings::Default,
+        MinimumUpdateIntervalSettings::Default,
+        DirtyRegionSettings::Default,
+        ColorFormat::Bgra8,
+        output.clone(),
+    );
+
+    Grabber::start(settings).map_err(|e| anyhow::anyhow!("start window capture: {e}"))?;
+
+    let frame = output.lock().take();
+    frame.context("capture ended with no frame")
+}
+
+/// Capture a fixed rectangle out of the primary monitor.
+pub fn capture_fixed_region(x: i32, y: i32, w: u32, h: u32) -> Result<RgbaImage> {
+    let full = capture_primary_screen()?;
+    let fw = full.width() as i32;
+    let fh = full.height() as i32;
+    let x0 = x.max(0).min(fw.saturating_sub(1));
+    let y0 = y.max(0).min(fh.saturating_sub(1));
+    let x1 = (x + w as i32).max(0).min(fw);
+    let y1 = (y + h as i32).max(0).min(fh);
+    let cw = (x1 - x0).max(1) as u32;
+    let ch = (y1 - y0).max(1) as u32;
+    let mut out = RgbaImage::new(cw, ch);
+    out.copy_from(
+        &*image::imageops::crop_imm(&full, x0 as u32, y0 as u32, cw, ch),
+        0,
+        0,
+    )?;
+    Ok(out)
+}
+
+/// Auto-scroll capture: repeatedly snap the active window, send `PgDn`, and
+/// stitch the non-overlapping vertical delta. Works for any scroll container
+/// where PgDn advances the visible area; the user can pick a different key via
+/// `send_key_vk` in a future revision.
+///
+/// This is intentionally naive — it captures up to `max_iterations` frames with
+/// `delay_ms` between them. Each new capture is diffed against the previous
+/// using a simple per-row hash; rows that match the tail of the previous image
+/// are discarded and the rest is appended downward.
+pub fn capture_auto_scroll(max_iterations: usize, delay_ms: u64) -> Result<RgbaImage> {
+    use std::thread::sleep;
+
+    let first = capture_active_window()?;
+    let mut stitched = first.clone();
+
+    for _ in 0..max_iterations {
+        send_pgdn();
+        sleep(Duration::from_millis(delay_ms));
+        let next = capture_active_window()?;
+        if next.dimensions() != first.dimensions() {
+            break;
+        }
+        let overlap = find_vertical_overlap(&stitched, &next);
+        if overlap >= next.height() {
+            // Content didn't advance (end of scrollable region).
+            break;
+        }
+        append_below(&mut stitched, &next, overlap);
+    }
+
+    Ok(stitched)
+}
+
+fn send_pgdn() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VK_NEXT,
+    };
+    unsafe {
+        let down = INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VK_NEXT,
+                    wScan: 0,
+                    dwFlags: KEYBD_EVENT_FLAGS(0),
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        let up = INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VK_NEXT,
+                    wScan: 0,
+                    dwFlags: KEYEVENTF_KEYUP,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        let inputs = [down, up];
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+/// Return how many rows at the top of `next` already exist at the bottom of
+/// `stitched`. Uses a coarse per-row hash (sum of channel bytes) which is
+/// good enough for screenshot content where adjacent scroll frames overlap
+/// on byte-identical rows.
+fn find_vertical_overlap(stitched: &RgbaImage, next: &RgbaImage) -> u32 {
+    let w = stitched.width().min(next.width()) as usize;
+    let sh = stitched.height() as usize;
+    let nh = next.height() as usize;
+    let max_try = sh.min(nh);
+
+    // Pre-hash rows.
+    let hash_row = |img: &RgbaImage, y: u32| -> u64 {
+        let row = img
+            .as_raw()
+            .chunks_exact(img.width() as usize * 4)
+            .nth(y as usize)
+            .unwrap_or(&[]);
+        let mut h: u64 = 1469598103934665603;
+        for &b in row.iter().take(w * 4) {
+            h = h.wrapping_mul(1099511628211);
+            h ^= b as u64;
+        }
+        h
+    };
+
+    // Try decreasing overlap sizes; return the first match.
+    for overlap in (1..=max_try).rev() {
+        let mut matched = true;
+        for i in 0..overlap {
+            let s = hash_row(stitched, (sh - overlap + i) as u32);
+            let n = hash_row(next, i as u32);
+            if s != n {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
+            return overlap as u32;
+        }
+    }
+    0
+}
+
+fn append_below(stitched: &mut RgbaImage, next: &RgbaImage, overlap: u32) {
+    let w = stitched.width().max(next.width());
+    let extra = next.height().saturating_sub(overlap);
+    let new_h = stitched.height() + extra;
+    let mut out = RgbaImage::new(w, new_h);
+    let _ = out.copy_from(stitched, 0, 0);
+    let tail = image::imageops::crop_imm(next, 0, overlap, next.width(), extra);
+    let _ = out.copy_from(&*tail, 0, stitched.height());
+    *stitched = out;
 }

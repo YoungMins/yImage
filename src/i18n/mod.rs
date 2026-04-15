@@ -68,9 +68,7 @@ fn build_bundle(langid: LanguageIdentifier, src: &str) -> FluentBundle<FluentRes
     // Fluent inserts isolating Unicode marks around arguments by default which
     // looks awful in our UI. Disable.
     bundle.set_use_isolating(false);
-    bundle
-        .add_resource(resource)
-        .expect("add fluent resource");
+    bundle.add_resource(resource).expect("add fluent resource");
     bundle
 }
 

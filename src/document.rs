@@ -53,7 +53,8 @@ impl Document {
 
     pub fn undo(&mut self) -> bool {
         if let Some(prev) = self.undo_stack.pop() {
-            self.redo_stack.push(std::mem::replace(&mut self.image, prev));
+            self.redo_stack
+                .push(std::mem::replace(&mut self.image, prev));
             true
         } else {
             false
@@ -62,7 +63,8 @@ impl Document {
 
     pub fn redo(&mut self) -> bool {
         if let Some(next) = self.redo_stack.pop() {
-            self.undo_stack.push(std::mem::replace(&mut self.image, next));
+            self.undo_stack
+                .push(std::mem::replace(&mut self.image, next));
             true
         } else {
             false

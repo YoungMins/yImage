@@ -35,11 +35,7 @@ impl Default for GifOptions {
     }
 }
 
-pub fn build_gif_from_paths(
-    inputs: &[PathBuf],
-    out_path: &Path,
-    opts: &GifOptions,
-) -> Result<()> {
+pub fn build_gif_from_paths(inputs: &[PathBuf], out_path: &Path, opts: &GifOptions) -> Result<()> {
     if inputs.is_empty() {
         anyhow::bail!("no input frames");
     }
@@ -60,8 +56,7 @@ pub fn build_gif(frames: &[RgbaImage], out_path: &Path, opts: &GifOptions) -> Re
     };
 
     let file = File::create(out_path).with_context(|| format!("create {}", out_path.display()))?;
-    let mut encoder = Encoder::new(file, w as u16, h as u16, &[])
-        .context("create gif encoder")?;
+    let mut encoder = Encoder::new(file, w as u16, h as u16, &[]).context("create gif encoder")?;
     encoder
         .set_repeat(match opts.loop_count {
             0 => Repeat::Infinite,
@@ -97,10 +92,11 @@ fn quantise_frame(image: &RgbaImage) -> Frame<'static> {
         indexed.push(idx);
     }
 
-    let mut frame = Frame::default();
-    frame.width = image.width() as u16;
-    frame.height = image.height() as u16;
-    frame.buffer = indexed.into();
-    frame.palette = Some(palette_rgb);
-    frame
+    Frame {
+        width: image.width() as u16,
+        height: image.height() as u16,
+        buffer: indexed.into(),
+        palette: Some(palette_rgb),
+        ..Frame::default()
+    }
 }

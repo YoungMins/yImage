@@ -34,10 +34,7 @@ fn get_session() -> Result<&'static parking_lot::Mutex<Session>> {
     SESSION.get_or_try_init(|| {
         let path = model_path();
         if !path.exists() {
-            anyhow::bail!(
-                "background removal model not found at {}",
-                path.display()
-            );
+            anyhow::bail!("background removal model not found at {}", path.display());
         }
         let session = Session::builder()
             .map_err(|e| anyhow::anyhow!("ort session builder: {e}"))?
@@ -48,9 +45,10 @@ fn get_session() -> Result<&'static parking_lot::Mutex<Session>> {
 }
 
 #[cfg(feature = "ai")]
+#[allow(clippy::erasing_op, clippy::identity_op)]
 pub fn remove_background(image: &RgbaImage) -> Result<RgbaImage> {
     use crate::ops::resize::{resize_rgba, Filter};
-    use ort::value::{Tensor, Shape};
+    use ort::value::{Shape, Tensor};
 
     const SIZE: usize = 320;
     let small = resize_rgba(image, SIZE as u32, SIZE as u32, Filter::Bilinear)?;

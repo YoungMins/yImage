@@ -2,6 +2,7 @@
 // selection, i18n bundle, settings, and the channel used by background workers
 // to push finished work back to the UI thread.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -12,8 +13,12 @@ use parking_lot::Mutex;
 use crate::document::Document;
 use crate::i18n::I18n;
 use crate::io::load::load_image;
+use crate::models::{DownloadManager, ModelKind};
 use crate::tools::ToolKind;
 use crate::ui;
+
+#[cfg(all(windows, feature = "capture"))]
+use crate::hotkeys::{HotkeyAction, HotkeyRegistry};
 
 /// Messages background workers can post to the UI thread.
 #[derive(Debug)]
@@ -28,9 +33,6 @@ pub enum BgMsg {
     Info(String),
 }
 
-/// Optional startup action derived from CLI flags. Lets Windows Explorer's
-/// right-click verbs jump directly into a specific dialog after opening the
-/// selected file.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StartupAction {
     #[default]
@@ -50,6 +52,67 @@ pub struct Settings {
     pub jpeg_quality: u8,
     pub png_level: u8,
     pub webp_quality: u8,
+    #[serde(default)]
+    pub thumbs_visible: bool,
+    /// Global hotkey bindings (action key → HotKey spec string). Persists
+    /// across restarts so users only need to set them once.
+    #[serde(default, with = "hotkey_map_serde")]
+    pub hotkeys: HotkeyConfig,
+}
+
+#[cfg(all(windows, feature = "capture"))]
+pub type HotkeyConfig = HashMap<HotkeyAction, String>;
+
+#[cfg(not(all(windows, feature = "capture")))]
+pub type HotkeyConfig = HashMap<String, String>;
+
+// Since HotkeyAction is an enum (only exists on windows+capture), serde
+// it as a string-keyed map on the wire. On non-windows the raw map is
+// serialised directly.
+mod hotkey_map_serde {
+    use super::HotkeyConfig;
+    use serde::{Deserializer, Serializer};
+
+    #[cfg(all(windows, feature = "capture"))]
+    pub fn serialize<S: Serializer>(value: &HotkeyConfig, ser: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut m = ser.serialize_map(Some(value.len()))?;
+        for (k, v) in value {
+            m.serialize_entry(k.as_key(), v)?;
+        }
+        m.end()
+    }
+
+    #[cfg(all(windows, feature = "capture"))]
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<HotkeyConfig, D::Error> {
+        use crate::hotkeys::HotkeyAction;
+        use serde::Deserialize;
+        use std::collections::HashMap as Map;
+        let raw: Map<String, String> = Map::deserialize(de)?;
+        let mut out = HotkeyConfig::new();
+        for (k, v) in raw {
+            let action = match k.as_str() {
+                "capture.fullscreen" => HotkeyAction::CaptureFullscreen,
+                "capture.window" => HotkeyAction::CaptureActiveWindow,
+                "capture.region" => HotkeyAction::CaptureRegion,
+                "capture.fixed" => HotkeyAction::CaptureFixedRegion,
+                "capture.scroll" => HotkeyAction::CaptureAutoScroll,
+                _ => continue,
+            };
+            out.insert(action, v);
+        }
+        Ok(out)
+    }
+
+    #[cfg(not(all(windows, feature = "capture")))]
+    pub fn serialize<S: Serializer>(value: &HotkeyConfig, ser: S) -> Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(value, ser)
+    }
+
+    #[cfg(not(all(windows, feature = "capture")))]
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<HotkeyConfig, D::Error> {
+        serde::Deserialize::deserialize(de)
+    }
 }
 
 impl Default for Settings {
@@ -61,6 +124,11 @@ impl Default for Settings {
             jpeg_quality: 85,
             png_level: 3,
             webp_quality: 85,
+            thumbs_visible: true,
+            #[cfg(all(windows, feature = "capture"))]
+            hotkeys: crate::hotkeys::defaults(),
+            #[cfg(not(all(windows, feature = "capture")))]
+            hotkeys: HashMap::new(),
         }
     }
 }
@@ -80,9 +148,11 @@ pub struct YImageApp {
     pub texture_dirty: bool,
     pub folder_entries: Arc<Mutex<Vec<PathBuf>>>,
     pub folder_index: usize,
-    /// Action to auto-run as soon as the startup image finishes loading.
-    /// Cleared once applied so subsequent user-initiated opens don't re-trigger.
     pub pending_action: StartupAction,
+    pub thumbs: ui::thumbnails::Thumbnails,
+    pub downloads: DownloadManager,
+    #[cfg(all(windows, feature = "capture"))]
+    pub hotkeys: Option<HotkeyRegistry>,
 }
 
 impl YImageApp {
@@ -98,12 +168,15 @@ impl YImageApp {
 
         let i18n = I18n::new(&settings.language);
         if settings.theme_dark {
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            ui::theme::apply_dark(&cc.egui_ctx);
         } else {
-            cc.egui_ctx.set_visuals(egui::Visuals::light());
+            ui::theme::apply_light(&cc.egui_ctx);
         }
 
         let (tx, rx) = crossbeam_channel::unbounded();
+
+        let mut thumbs = ui::thumbnails::Thumbnails::new();
+        thumbs.visible = settings.thumbs_visible;
 
         let mut app = Self {
             doc: None,
@@ -121,7 +194,24 @@ impl YImageApp {
             folder_entries: Arc::new(Mutex::new(Vec::new())),
             folder_index: 0,
             pending_action: startup_action,
+            thumbs,
+            downloads: DownloadManager::default(),
+            #[cfg(all(windows, feature = "capture"))]
+            hotkeys: None,
         };
+
+        #[cfg(all(windows, feature = "capture"))]
+        {
+            match HotkeyRegistry::new() {
+                Ok(mut reg) => {
+                    reg.apply(&app.settings.hotkeys);
+                    app.hotkeys = Some(reg);
+                }
+                Err(e) => {
+                    tracing::warn!("failed to init hotkey registry: {e}");
+                }
+            }
+        }
 
         if let Some(path) = startup_file {
             app.open_path(&path);
@@ -130,9 +220,6 @@ impl YImageApp {
         app
     }
 
-    /// Apply a pending Explorer-shell action once the image is actually
-    /// loaded into the document. Clears `pending_action` so it only fires
-    /// once per startup.
     fn apply_pending_action(&mut self) {
         let action = std::mem::replace(&mut self.pending_action, StartupAction::Open);
         match action {
@@ -161,8 +248,6 @@ impl YImageApp {
         }
     }
 
-    /// Run U²-Net on the current document off the UI thread. Wired from both
-    /// the sidebar "Run" button and the `--bg-remove` startup action.
     pub fn run_background_remove(&mut self) {
         let Some(doc) = self.doc.as_ref() else { return };
         let image = doc.image.clone();
@@ -186,14 +271,74 @@ impl YImageApp {
             #[cfg(not(feature = "ai"))]
             {
                 let _ = (image, label);
-                let _ = tx.send(BgMsg::Error(
-                    "built without the `ai` feature".to_string(),
-                ));
+                let _ = tx.send(BgMsg::Error("built without the `ai` feature".to_string()));
             }
         });
     }
 
-    /// Load an image from disk asynchronously on a rayon worker.
+    pub fn run_object_remove(&mut self) {
+        let Some(doc) = self.doc.as_ref() else { return };
+        let Some(mask) = self.dialog.obj_mask.clone() else {
+            return;
+        };
+        let image = doc.image.clone();
+        let tx = self.tx.clone();
+        let label = self.i18n.t("tool-obj-remove", &[]);
+        let _ = tx.send(BgMsg::Progress(label.clone(), 0.1));
+        rayon::spawn(move || {
+            #[cfg(feature = "ai")]
+            match crate::tools::obj_remove::inpaint(&image, &mask) {
+                Ok(out) => {
+                    let _ = tx.send(BgMsg::ImageLoaded {
+                        path: PathBuf::new(),
+                        image: out,
+                    });
+                    let _ = tx.send(BgMsg::Progress(label, 1.0));
+                }
+                Err(e) => {
+                    let _ = tx.send(BgMsg::Error(format!("{e:#}")));
+                }
+            }
+            #[cfg(not(feature = "ai"))]
+            {
+                let _ = (image, mask, label);
+                let _ = tx.send(BgMsg::Error("built without the `ai` feature".to_string()));
+            }
+        });
+    }
+
+    pub fn download_state(&self, kind: ModelKind) -> crate::models::DownloadState {
+        self.downloads.state(kind)
+    }
+
+    pub fn download_model(&self, kind: ModelKind) {
+        let slot = self.downloads.slot(kind);
+        {
+            let mut s = slot.lock();
+            if s.in_progress {
+                return;
+            }
+            s.in_progress = true;
+            s.progress = 0.0;
+            s.message = None;
+        }
+        let tx = self.tx.clone();
+        let url = kind.url().to_string();
+        let dest = kind.path();
+        rayon::spawn(move || {
+            let _ = tx.send(BgMsg::Info(format!("downloading {}", url)));
+            match crate::models::download_blocking(&url, &dest, slot.clone()) {
+                Ok(()) => {
+                    let _ = tx.send(BgMsg::Info(format!("downloaded {}", dest.display())));
+                }
+                Err(e) => {
+                    let _ = tx.send(BgMsg::Error(format!("download: {e:#}")));
+                }
+            }
+            slot.lock().in_progress = false;
+        });
+    }
+
     pub fn open_path(&mut self, path: &Path) {
         let tx = self.tx.clone();
         let path = path.to_path_buf();
@@ -209,8 +354,11 @@ impl YImageApp {
         });
     }
 
-    /// Populate `folder_entries` with neighbouring images so next/prev works.
     fn scan_folder(&self, current: &Path) {
+        self.scan_folder_now(current);
+    }
+
+    pub fn scan_folder_now(&self, current: &Path) {
         let Some(dir) = current.parent() else { return };
         let dir = dir.to_path_buf();
         let entries = self.folder_entries.clone();
@@ -246,14 +394,48 @@ impl YImageApp {
         self.open_path(&path);
     }
 
-    /// Drain background messages into UI-visible state.
+    #[cfg(all(windows, feature = "capture"))]
+    pub fn trigger_capture(&mut self, mode: crate::capture::CaptureMode) {
+        use crate::capture::CaptureMode;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = match mode {
+                CaptureMode::Fullscreen => crate::capture::capture_primary_screen(),
+                CaptureMode::ActiveWindow => crate::capture::capture_active_window(),
+                CaptureMode::Region => crate::capture::capture_primary_screen(),
+                CaptureMode::FixedRegion { x, y, w, h } => {
+                    crate::capture::capture_fixed_region(x, y, w, h)
+                }
+                CaptureMode::AutoScroll => crate::capture::capture_auto_scroll(20, 350),
+            };
+            match result {
+                Ok(img) => {
+                    let path =
+                        std::env::temp_dir().join(format!("yimage-capture-{}.png", unix_millis()));
+                    if let Err(e) = crate::io::save::save_image(&img, &path) {
+                        let _ = tx.send(BgMsg::Error(format!("save capture: {e:#}")));
+                        return;
+                    }
+                    let _ = tx.send(BgMsg::ImageLoaded { path, image: img });
+                }
+                Err(e) => {
+                    let _ = tx.send(BgMsg::Error(format!("capture: {e:#}")));
+                }
+            }
+        });
+    }
+
+    #[cfg(all(windows, feature = "capture"))]
+    pub fn apply_hotkeys(&mut self) {
+        if let Some(reg) = self.hotkeys.as_mut() {
+            reg.apply(&self.settings.hotkeys);
+        }
+    }
+
     fn poll_messages(&mut self, ctx: &egui::Context) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 BgMsg::ImageLoaded { path, image } => {
-                    // An empty path means "in-memory result" (e.g. bg-remove
-                    // output); preserve the existing document path in that
-                    // case so saves still go to the original file.
                     let keep_path = if path.as_os_str().is_empty() {
                         self.doc.as_ref().and_then(|d| d.path.clone())
                     } else {
@@ -291,24 +473,33 @@ impl YImageApp {
             }
         }
     }
+
+    #[cfg(all(windows, feature = "capture"))]
+    fn poll_hotkeys(&mut self) {
+        let Some(reg) = self.hotkeys.as_ref() else {
+            return;
+        };
+        for action in reg.poll() {
+            let mode = action.to_mode();
+            self.trigger_capture(mode);
+        }
+    }
 }
 
 impl eframe::App for YImageApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.settings.thumbs_visible = self.thumbs.visible;
         eframe::set_value(storage, "settings", &self.settings);
     }
 
     fn ui(&mut self, ui_root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui_root.ctx().clone();
         self.poll_messages(&ctx);
+        #[cfg(all(windows, feature = "capture"))]
+        self.poll_hotkeys();
 
-        // Accept drag-and-drop files.
-        let dropped_path: Option<PathBuf> = ctx.input(|i| {
-            i.raw
-                .dropped_files
-                .first()
-                .and_then(|f| f.path.clone())
-        });
+        let dropped_path: Option<PathBuf> =
+            ctx.input(|i| i.raw.dropped_files.first().and_then(|f| f.path.clone()));
         if let Some(path) = dropped_path {
             let _ = self
                 .tx
@@ -317,6 +508,7 @@ impl eframe::App for YImageApp {
         }
 
         ui::toolbar::show(&ctx, self);
+        ui::thumbnails::show(&ctx, self);
         ui::sidebar::show(&ctx, self);
         ui::statusbar::show(&ctx, self);
         ui::viewer::show(&ctx, self);
@@ -330,8 +522,15 @@ fn is_supported_image(p: &Path) -> bool {
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase())
             .as_deref(),
-        Some(
-            "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif" | "tif" | "tiff" | "avif"
-        )
+        Some("png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif" | "tif" | "tiff" | "avif")
     )
+}
+
+#[cfg(all(windows, feature = "capture"))]
+fn unix_millis() -> u128 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
 }

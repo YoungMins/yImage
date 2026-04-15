@@ -1,6 +1,7 @@
-// Modal dialogs (shown as egui Windows) for Resize, Convert, Optimize, Save-as
-// and GIF builder. Per-tool state also lives on DialogState to avoid stuffing
-// it onto the main App struct.
+// Modal dialogs (shown as egui Windows) for Resize, Convert, Optimize, Save-as.
+// Per-tool state also lives on DialogState to avoid stuffing it onto the main
+// App struct. The GIF builder has graduated to its own timeline workspace
+// (`ui::gif_timeline`) and no longer uses a modal dialog.
 
 use std::path::PathBuf;
 
@@ -8,7 +9,11 @@ use image::GrayImage;
 
 use crate::app::{BgMsg, YImageApp};
 use crate::ops::resize::{aspect_fit, resize_rgba, Filter};
-use crate::tools::{draw::BrushState, mosaic::MosaicState};
+use crate::tools::{
+    draw::{BrushState, ShapeState, TextState},
+    mosaic::MosaicState,
+};
+use crate::ui::gif_timeline::GifTimelineState;
 
 #[derive(Default)]
 pub struct DialogState {
@@ -29,16 +34,24 @@ pub struct DialogState {
     // Save as
     pub save_dialog_open: bool,
 
-    // GIF
-    pub gif_open: bool,
-    pub gif_inputs: Vec<PathBuf>,
-    pub gif_delay_ms: u16,
+    // GIF timeline workspace
+    pub gif: GifTimelineState,
+    pub gif_timeline_open: bool,
 
     // Tool state
     pub brush: BrushState,
     pub mosaic: MosaicState,
     pub mosaic_start: Option<(f32, f32)>,
+    pub text: TextState,
+    pub shape: ShapeState,
+    pub shape_start: Option<(f32, f32)>,
     pub obj_mask: Option<GrayImage>,
+
+    // Fixed-region capture rectangle (in screen coordinates).
+    pub fixed_region: Option<(i32, i32, u32, u32)>,
+
+    // Hotkeys dialog
+    pub hotkeys_open: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -73,9 +86,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         save_as_dialog(app);
         app.dialog.save_dialog_open = false;
     }
-    if app.dialog.gif_open {
-        gif_dialog(ctx, app);
+    if app.dialog.hotkeys_open {
+        hotkeys_dialog(ctx, app);
     }
+    crate::ui::gif_timeline::show(ctx, app);
 }
 
 fn resize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
@@ -177,11 +191,7 @@ fn convert_dialog(ctx: &egui::Context, app: &mut YImageApp) {
                 .selected_text(&app.dialog.convert_target)
                 .show_ui(ui, |ui| {
                     for ext in ["png", "jpg", "webp", "bmp", "tiff", "gif", "avif"] {
-                        ui.selectable_value(
-                            &mut app.dialog.convert_target,
-                            ext.to_string(),
-                            ext,
-                        );
+                        ui.selectable_value(&mut app.dialog.convert_target, ext.to_string(), ext);
                     }
                 });
             if ui.button(app.i18n.t("action-save-as", &[])).clicked() {
@@ -267,8 +277,8 @@ fn optimize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
                 webp_quality: app.settings.webp_quality,
             };
             let tx = app.tx.clone();
-            rayon::spawn(move || {
-                match crate::io::optimize::optimize_to(&image, &out, &opts) {
+            rayon::spawn(
+                move || match crate::io::optimize::optimize_to(&image, &out, &opts) {
                     Ok(size) => {
                         let _ = tx.send(BgMsg::Info(format!(
                             "optimized -> {} ({} bytes)",
@@ -279,8 +289,8 @@ fn optimize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
                     Err(e) => {
                         let _ = tx.send(BgMsg::Error(format!("{e:#}")));
                     }
-                }
-            });
+                },
+            );
         }
         app.dialog.optimize_open = false;
     }
@@ -295,7 +305,10 @@ fn save_as_dialog(app: &mut YImageApp) {
         .and_then(|f| f.to_str())
         .unwrap_or("image.png")
         .to_string();
-    if let Some(out) = rfd::FileDialog::new().set_file_name(default_name).save_file() {
+    if let Some(out) = rfd::FileDialog::new()
+        .set_file_name(default_name)
+        .save_file()
+    {
         let image = doc.image.clone();
         let tx = app.tx.clone();
         rayon::spawn(move || {
@@ -308,65 +321,71 @@ fn save_as_dialog(app: &mut YImageApp) {
     }
 }
 
-fn gif_dialog(ctx: &egui::Context, app: &mut YImageApp) {
-    let mut open = app.dialog.gif_open;
-    let mut build = false;
-    if app.dialog.gif_delay_ms == 0 {
-        app.dialog.gif_delay_ms = 100;
-    }
-    egui::Window::new(app.i18n.t("action-gif", &[]))
+#[cfg(all(windows, feature = "capture"))]
+fn hotkeys_dialog(ctx: &egui::Context, app: &mut YImageApp) {
+    use crate::hotkeys::HotkeyAction;
+    let mut open = app.dialog.hotkeys_open;
+    let mut apply = false;
+    egui::Window::new(app.i18n.t("hotkeys-title", &[]))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
+        .default_width(420.0)
         .show(ctx, |ui| {
-            if ui.button(app.i18n.t("gif-pick-frames", &[])).clicked() {
-                if let Some(files) = rfd::FileDialog::new()
-                    .add_filter("images", &["png", "jpg", "jpeg", "webp", "bmp"])
-                    .pick_files()
-                {
-                    app.dialog.gif_inputs = files;
-                }
+            ui.label(app.i18n.t("hotkeys-hint", &[]));
+            ui.separator();
+
+            // Show current conflicts so the warning is live as the user edits.
+            let conflicts = crate::hotkeys::HotkeyRegistry::detect_conflicts(&app.settings.hotkeys);
+
+            for action in HotkeyAction::all() {
+                let label = action_label(action, &app.i18n);
+                let key = action.as_key().to_string();
+                ui.horizontal(|ui| {
+                    ui.label(label);
+                    let entry = app.settings.hotkeys.entry(action).or_default();
+                    let edit = egui::TextEdit::singleline(entry)
+                        .hint_text("Ctrl+Shift+KeyA")
+                        .desired_width(180.0);
+                    ui.add(edit);
+                    if let Some(other) = conflicts.get(&action) {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(0xE8, 0x80, 0x40),
+                            format!("⚠ {}", action_label(*other, &app.i18n)),
+                        );
+                    }
+                    if let Some(err) = app.hotkeys.as_ref().and_then(|r| r.errors.get(&action)) {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(0xE8, 0x60, 0x40),
+                            format!("⚠ {err}"),
+                        );
+                    }
+                    let _ = key;
+                });
             }
-            ui.label(format!("{} frames", app.dialog.gif_inputs.len()));
-            ui.add(
-                egui::Slider::new(&mut app.dialog.gif_delay_ms, 20..=1000)
-                    .text(app.i18n.t("gif-delay-ms", &[])),
-            );
-            if ui
-                .add_enabled(
-                    !app.dialog.gif_inputs.is_empty(),
-                    egui::Button::new(app.i18n.t("action-build", &[])),
-                )
-                .clicked()
-            {
-                build = true;
+
+            ui.separator();
+            if ui.button(app.i18n.t("action-apply", &[])).clicked() {
+                apply = true;
             }
         });
-    app.dialog.gif_open = open;
+    app.dialog.hotkeys_open = open;
+    if apply {
+        app.apply_hotkeys();
+    }
+}
 
-    if build {
-        if let Some(out) = rfd::FileDialog::new()
-            .set_file_name("output.gif")
-            .add_filter("gif", &["gif"])
-            .save_file()
-        {
-            let inputs = app.dialog.gif_inputs.clone();
-            let opts = crate::ops::gif::GifOptions {
-                delay_ms: app.dialog.gif_delay_ms,
-                ..Default::default()
-            };
-            let tx = app.tx.clone();
-            rayon::spawn(move || {
-                match crate::ops::gif::build_gif_from_paths(&inputs, &out, &opts) {
-                    Ok(()) => {
-                        let _ = tx.send(BgMsg::Info(format!("gif saved: {}", out.display())));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(BgMsg::Error(format!("{e:#}")));
-                    }
-                }
-            });
-        }
-        app.dialog.gif_open = false;
+#[cfg(not(all(windows, feature = "capture")))]
+fn hotkeys_dialog(_ctx: &egui::Context, _app: &mut YImageApp) {}
+
+#[cfg(all(windows, feature = "capture"))]
+fn action_label(action: crate::hotkeys::HotkeyAction, i18n: &crate::i18n::I18n) -> String {
+    use crate::hotkeys::HotkeyAction;
+    match action {
+        HotkeyAction::CaptureFullscreen => i18n.t("cap-fullscreen", &[]),
+        HotkeyAction::CaptureActiveWindow => i18n.t("cap-window", &[]),
+        HotkeyAction::CaptureRegion => i18n.t("cap-region", &[]),
+        HotkeyAction::CaptureFixedRegion => i18n.t("cap-fixed", &[]),
+        HotkeyAction::CaptureAutoScroll => i18n.t("cap-scroll", &[]),
     }
 }

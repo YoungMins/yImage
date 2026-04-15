@@ -2,7 +2,7 @@
 // texture from the current Document, and dispatches pointer events to the
 // active editing tool.
 
-use egui::{Color32, ColorImage, Pos2, Rect, Sense, TextureOptions, Vec2};
+use egui::{Color32, ColorImage, Pos2, Rect, Sense, Stroke, TextureOptions, Vec2};
 
 use crate::app::YImageApp;
 use crate::tools::ToolKind;
@@ -25,7 +25,9 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     if let Some(p) = rfd::FileDialog::new()
                         .add_filter(
                             "images",
-                            &["png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff", "avif"],
+                            &[
+                                "png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff", "avif",
+                            ],
                         )
                         .pick_file()
                     {
@@ -50,11 +52,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     source_size: egui::vec2(size[0] as f32, size[1] as f32),
                     pixels,
                 };
-                let tex = ctx.load_texture(
-                    "yimage_doc",
-                    color_img,
-                    TextureOptions::LINEAR,
-                );
+                let tex = ctx.load_texture("yimage_doc", color_img, TextureOptions::LINEAR);
                 app.texture = Some(tex);
                 app.texture_dirty = false;
             }
@@ -72,7 +70,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         if app.viewer.zoom == 0.0 || app.viewer.reset_view {
             let sx = avail.width() / img_size.x;
             let sy = avail.height() / img_size.y;
-            app.viewer.zoom = sx.min(sy).min(1.0).max(0.05);
+            app.viewer.zoom = sx.min(sy).clamp(0.05, 1.0);
             app.viewer.offset = Vec2::ZERO;
             app.viewer.reset_view = false;
         }
@@ -98,7 +96,6 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                 let old_zoom = app.viewer.zoom;
                 let new_zoom = (old_zoom * factor).clamp(0.02, 32.0);
                 if let Some(pos) = i.pointer.hover_pos() {
-                    // Keep the point under the cursor stable.
                     let delta = pos - center;
                     app.viewer.offset += delta * (1.0 - new_zoom / old_zoom);
                 }
@@ -114,7 +111,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         // Dispatch pointer events to the active tool.
         handle_tool_input(app, &response, rect, img_size);
 
-        // Click navigation via left/right arrows handled in input.
+        // Draw overlays (brush cursor, shape preview) on top of the image.
+        draw_overlays(ctx, ui, app, &response, rect, img_size);
+
+        // Keyboard navigation and shortcuts.
         ctx.input(|i| {
             if i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::PageDown) {
                 app.navigate(1);
@@ -143,12 +143,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
     });
 }
 
-fn handle_tool_input(
-    app: &mut YImageApp,
-    response: &egui::Response,
-    rect: Rect,
-    img_size: Vec2,
-) {
+fn handle_tool_input(app: &mut YImageApp, response: &egui::Response, rect: Rect, img_size: Vec2) {
     let Some(doc) = app.doc.as_mut() else { return };
 
     let screen_to_image = |pos: Pos2| -> Option<(f32, f32)> {
@@ -209,8 +204,40 @@ fn handle_tool_input(
                 app.dialog.mosaic_start = None;
             }
         }
+        ToolKind::Text => {
+            if response.clicked_by(egui::PointerButton::Primary)
+                && !app.dialog.text.content.is_empty()
+            {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    if let Some(img_pos) = screen_to_image(pos) {
+                        doc.push_undo();
+                        app.dialog.text.stamp(&mut doc.image, img_pos.0, img_pos.1);
+                        app.texture_dirty = true;
+                    }
+                }
+            }
+        }
+        ToolKind::Shape => {
+            if response.drag_started_by(egui::PointerButton::Primary) {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    if let Some(img_pos) = screen_to_image(pos) {
+                        app.dialog.shape_start = Some(img_pos);
+                    }
+                }
+            }
+            if response.drag_stopped_by(egui::PointerButton::Primary) {
+                if let (Some(start), Some(end)) = (
+                    app.dialog.shape_start,
+                    response.interact_pointer_pos().and_then(screen_to_image),
+                ) {
+                    doc.push_undo();
+                    app.dialog.shape.commit(&mut doc.image, start, end);
+                    app.texture_dirty = true;
+                }
+                app.dialog.shape_start = None;
+            }
+        }
         ToolKind::ObjectRemove => {
-            // User brushes onto a mask overlay while the tool is active.
             if response.drag_started_by(egui::PointerButton::Primary) {
                 let (w, h) = (doc.width(), doc.height());
                 if app.dialog.obj_mask.is_none() {
@@ -228,6 +255,128 @@ fn handle_tool_input(
             }
         }
         _ => {}
+    }
+}
+
+/// Draw ephemeral overlays (brush outline, shape drag preview) on top of the
+/// already-painted image.
+fn draw_overlays(
+    ctx: &egui::Context,
+    ui: &egui::Ui,
+    app: &YImageApp,
+    response: &egui::Response,
+    rect: Rect,
+    img_size: Vec2,
+) {
+    let painter = ui.painter_at(rect);
+
+    // Brush cursor preview.
+    if app.tool.has_brush_preview() && response.hovered() {
+        if let Some(pos) = ctx.pointer_hover_pos() {
+            let radius_img = match app.tool {
+                ToolKind::Draw => app.dialog.brush.radius,
+                ToolKind::Mosaic => app.dialog.mosaic.block_size as f32 * 0.5,
+                ToolKind::ObjectRemove => 20.0,
+                _ => 0.0,
+            };
+            let scale = rect.width() / img_size.x.max(1.0);
+            let radius_screen = (radius_img * scale).max(2.0);
+            let outline = Color32::from_rgb(0x00, 0x78, 0xD4);
+            painter.circle_stroke(pos, radius_screen, Stroke::new(1.5, outline));
+            painter.circle_stroke(pos, radius_screen, Stroke::new(0.6, Color32::WHITE));
+            // Center cross.
+            painter.line_segment(
+                [pos - Vec2::new(3.0, 0.0), pos + Vec2::new(3.0, 0.0)],
+                Stroke::new(1.0, Color32::WHITE),
+            );
+            painter.line_segment(
+                [pos - Vec2::new(0.0, 3.0), pos + Vec2::new(0.0, 3.0)],
+                Stroke::new(1.0, Color32::WHITE),
+            );
+        }
+    }
+
+    // Shape drag preview.
+    if app.tool == ToolKind::Shape {
+        if let (Some(start), Some(hover)) = (app.dialog.shape_start, ctx.pointer_hover_pos()) {
+            let scale = rect.width() / img_size.x.max(1.0);
+            let start_screen = rect.min + Vec2::new(start.0 * scale, start.1 * scale);
+            let stroke = Stroke::new(
+                2.0,
+                Color32::from_rgba_unmultiplied(
+                    app.dialog.shape.color[0],
+                    app.dialog.shape.color[1],
+                    app.dialog.shape.color[2],
+                    180,
+                ),
+            );
+            use crate::tools::draw::ShapeKind;
+            match app.dialog.shape.kind {
+                ShapeKind::Rect | ShapeKind::RectFilled => {
+                    let r = Rect::from_two_pos(start_screen, hover);
+                    painter.rect_stroke(
+                        r,
+                        egui::CornerRadius::ZERO,
+                        stroke,
+                        egui::StrokeKind::Middle,
+                    );
+                }
+                ShapeKind::Ellipse | ShapeKind::EllipseFilled => {
+                    let r = Rect::from_two_pos(start_screen, hover);
+                    // egui has no ellipse primitive; approximate with circle
+                    // using max-radius for a quick visual aid.
+                    let center = r.center();
+                    let rx = r.width().abs() * 0.5;
+                    let ry = r.height().abs() * 0.5;
+                    let n = 48;
+                    let mut pts = Vec::with_capacity(n + 1);
+                    for i in 0..=n {
+                        let a = i as f32 * std::f32::consts::TAU / n as f32;
+                        pts.push(center + Vec2::new(rx * a.cos(), ry * a.sin()));
+                    }
+                    for w in pts.windows(2) {
+                        painter.line_segment([w[0], w[1]], stroke);
+                    }
+                }
+                ShapeKind::Line | ShapeKind::Arrow => {
+                    painter.line_segment([start_screen, hover], stroke);
+                }
+            }
+        }
+    }
+
+    // Mosaic selection preview (rectangle being dragged).
+    if app.tool == ToolKind::Mosaic {
+        if let (Some(start), Some(hover)) = (app.dialog.mosaic_start, ctx.pointer_hover_pos()) {
+            let scale = rect.width() / img_size.x.max(1.0);
+            let start_screen = rect.min + Vec2::new(start.0 * scale, start.1 * scale);
+            let r = Rect::from_two_pos(start_screen, hover);
+            painter.rect_stroke(
+                r,
+                egui::CornerRadius::ZERO,
+                Stroke::new(1.5, Color32::from_rgb(0x00, 0x78, 0xD4)),
+                egui::StrokeKind::Middle,
+            );
+        }
+    }
+
+    // Object-removal mask: visualise the painted mask with a red overlay.
+    if app.tool == ToolKind::ObjectRemove {
+        if let Some(mask) = app.dialog.obj_mask.as_ref() {
+            // Coarse sampled indicator — full-resolution mask rendering would
+            // require uploading a new texture every frame.
+            let scale = rect.width() / img_size.x.max(1.0);
+            let sample_step = 8u32.max((mask.width() / 256).max(1));
+            let dot = Color32::from_rgba_unmultiplied(0xE0, 0x20, 0x20, 140);
+            for y in (0..mask.height()).step_by(sample_step as usize) {
+                for x in (0..mask.width()).step_by(sample_step as usize) {
+                    if mask.get_pixel(x, y).0[0] > 127 {
+                        let p = rect.min + Vec2::new(x as f32 * scale, y as f32 * scale);
+                        painter.circle_filled(p, (sample_step as f32 * scale * 0.5).max(1.0), dot);
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 // Top toolbar. Holds global actions (open / save / capture / GIF builder) and
-// tool selectors (draw, mosaic, background-remove, object-remove).
+// tool selectors (draw, mosaic, text, shape, background-remove, object-remove,
+// gif builder).
 
 use crate::app::{BgMsg, YImageApp};
 use crate::tools::ToolKind;
@@ -13,8 +14,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         .add_filter(
                             "images",
                             &[
-                                "png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff",
-                                "avif",
+                                "png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff", "avif",
                             ],
                         )
                         .pick_file()
@@ -70,14 +70,15 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                 }
                 ui.separator();
                 if ui.button(app.i18n.t("action-gif", &[])).clicked() {
-                    app.dialog.gif_open = true;
+                    app.tool = ToolKind::Gif;
+                    app.dialog.gif_timeline_open = true;
                     ui.close_menu();
                 }
+
+                // Capture submenu: fullscreen / window / region / fixed / scroll.
                 #[cfg(all(windows, feature = "capture"))]
-                if ui.button(app.i18n.t("action-capture", &[])).clicked() {
-                    trigger_capture(app);
-                    ui.close_menu();
-                }
+                capture_menu(ui, app);
+
                 ui.separator();
                 if ui.button(app.i18n.t("action-set-default", &[])).clicked() {
                     match crate::registry::register_file_associations() {
@@ -123,9 +124,9 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                 {
                     match crate::registry::unregister_context_menu() {
                         Ok(_) => {
-                            let _ = app.tx.send(BgMsg::Info(
-                                app.i18n.t("status-context-removed", &[]),
-                            ));
+                            let _ = app
+                                .tx
+                                .send(BgMsg::Info(app.i18n.t("status-context-removed", &[])));
                         }
                         Err(e) => {
                             let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
@@ -167,6 +168,35 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     app.viewer.zoom = 1.0;
                     ui.close_menu();
                 }
+                ui.separator();
+                let mut show_thumbs = app.thumbs.visible;
+                if ui
+                    .checkbox(&mut show_thumbs, app.i18n.t("view-thumbnails", &[]))
+                    .changed()
+                {
+                    app.thumbs.visible = show_thumbs;
+                }
+                ui.separator();
+                let mut dark = app.settings.theme_dark;
+                if ui
+                    .checkbox(&mut dark, app.i18n.t("view-dark-theme", &[]))
+                    .changed()
+                {
+                    app.settings.theme_dark = dark;
+                    if dark {
+                        crate::ui::theme::apply_dark(ctx);
+                    } else {
+                        crate::ui::theme::apply_light(ctx);
+                    }
+                }
+                #[cfg(all(windows, feature = "capture"))]
+                {
+                    ui.separator();
+                    if ui.button(app.i18n.t("menu-hotkeys", &[])).clicked() {
+                        app.dialog.hotkeys_open = true;
+                        ui.close_menu();
+                    }
+                }
             });
 
             ui.menu_button(app.i18n.t("menu-lang", &[]), |ui| {
@@ -188,6 +218,12 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                 ToolKind::Mosaic,
                 app.i18n.t("tool-mosaic", &[]),
             );
+            ui.selectable_value(&mut app.tool, ToolKind::Text, app.i18n.t("tool-text", &[]));
+            ui.selectable_value(
+                &mut app.tool,
+                ToolKind::Shape,
+                app.i18n.t("tool-shape", &[]),
+            );
             ui.selectable_value(
                 &mut app.tool,
                 ToolKind::BackgroundRemove,
@@ -198,6 +234,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                 ToolKind::ObjectRemove,
                 app.i18n.t("tool-obj-remove", &[]),
             );
+            ui.selectable_value(&mut app.tool, ToolKind::Gif, app.i18n.t("tool-gif", &[]));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.hyperlink_to("\u{2764} Ko-fi", "https://ko-fi.com/youngminkim");
@@ -207,31 +244,41 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
 }
 
 #[cfg(all(windows, feature = "capture"))]
-fn trigger_capture(app: &mut YImageApp) {
-    let tx = app.tx.clone();
-    std::thread::spawn(move || match crate::capture::capture_primary_screen() {
-        Ok(img) => {
-            let path = std::env::temp_dir().join(format!(
-                "yimage-capture-{}.png",
-                chrono_stub_now()
-            ));
-            if let Err(e) = crate::io::save::save_image(&img, &path) {
-                let _ = tx.send(BgMsg::Error(format!("save capture: {e:#}")));
-                return;
-            }
-            let _ = tx.send(BgMsg::ImageLoaded { path, image: img });
+fn capture_menu(ui: &mut egui::Ui, app: &mut YImageApp) {
+    ui.menu_button(app.i18n.t("action-capture", &[]), |ui| {
+        if ui.button(app.i18n.t("cap-fullscreen", &[])).clicked() {
+            app.trigger_capture(crate::capture::CaptureMode::Fullscreen);
+            ui.close_menu();
         }
-        Err(e) => {
-            let _ = tx.send(BgMsg::Error(format!("capture: {e:#}")));
+        if ui.button(app.i18n.t("cap-window", &[])).clicked() {
+            app.trigger_capture(crate::capture::CaptureMode::ActiveWindow);
+            ui.close_menu();
+        }
+        if ui.button(app.i18n.t("cap-region", &[])).clicked() {
+            app.trigger_capture(crate::capture::CaptureMode::Region);
+            ui.close_menu();
+        }
+        if ui.button(app.i18n.t("cap-fixed", &[])).clicked() {
+            let mode = match app.dialog.fixed_region {
+                Some((x, y, w, h)) => crate::capture::CaptureMode::FixedRegion { x, y, w, h },
+                None => crate::capture::CaptureMode::FixedRegion {
+                    x: 0,
+                    y: 0,
+                    w: 800,
+                    h: 600,
+                },
+            };
+            app.trigger_capture(mode);
+            ui.close_menu();
+        }
+        if ui.button(app.i18n.t("cap-scroll", &[])).clicked() {
+            app.trigger_capture(crate::capture::CaptureMode::AutoScroll);
+            ui.close_menu();
+        }
+        ui.separator();
+        if ui.button(app.i18n.t("menu-hotkeys", &[])).clicked() {
+            app.dialog.hotkeys_open = true;
+            ui.close_menu();
         }
     });
-}
-
-#[cfg(all(windows, feature = "capture"))]
-fn chrono_stub_now() -> u128 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
 }

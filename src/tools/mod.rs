@@ -14,6 +14,20 @@ pub enum ToolKind {
     None,
     Draw,
     Mosaic,
+    Text,
+    Shape,
     BackgroundRemove,
     ObjectRemove,
+    Gif,
+}
+
+impl ToolKind {
+    /// True if the tool paints a cursor-preview circle over the viewer when
+    /// the pointer hovers the image (brush, mosaic etc.).
+    pub fn has_brush_preview(self) -> bool {
+        matches!(
+            self,
+            ToolKind::Draw | ToolKind::Mosaic | ToolKind::ObjectRemove
+        )
+    }
 }
