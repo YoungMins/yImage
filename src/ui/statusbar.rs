@@ -9,9 +9,9 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         .show(ctx, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.add_space(4.0);
-                if let Some(doc) = &app.doc {
-                    let zoom_pct = app.viewer.zoom * 100.0;
-                    ui.weak(format!("{} × {} px", doc.width(), doc.height()));
+                if let Some(tab) = app.tabs.get(app.active_tab) {
+                    let zoom_pct = tab.viewer.zoom * 100.0;
+                    ui.weak(format!("{} × {} px", tab.doc.width(), tab.doc.height()));
                     ui.separator();
                     ui.weak(format!("{zoom_pct:.0}%"));
                     ui.separator();

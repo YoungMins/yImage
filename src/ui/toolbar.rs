@@ -25,13 +25,13 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                             )
                             .pick_file()
                         {
-                            app.open_path(&p);
+                            app.open_path(&p, true);
                         }
                         ui.close_menu();
                     }
                     if ui
                         .add_enabled(
-                            app.doc.is_some(),
+                            app.has_doc(),
                             egui::Button::new(format!(
                                 "\u{1F4BE}  {}",
                                 app.i18n.t("action-save-as", &[])
@@ -45,7 +45,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     ui.separator();
                     if ui
                         .add_enabled(
-                            app.doc.is_some(),
+                            app.has_doc(),
                             egui::Button::new(format!(
                                 "\u{26A1}  {}",
                                 app.i18n.t("action-optimize", &[])
@@ -58,7 +58,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     }
                     if ui
                         .add_enabled(
-                            app.doc.is_some(),
+                            app.has_doc(),
                             egui::Button::new(format!(
                                 "\u{2194}  {}",
                                 app.i18n.t("action-resize", &[])
@@ -67,7 +67,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         .clicked()
                     {
                         app.dialog.resize_open = true;
-                        if let Some(doc) = &app.doc {
+                        if let Some(doc) = app.active_doc() {
                             app.dialog.resize_w = doc.width();
                             app.dialog.resize_h = doc.height();
                         }
@@ -75,7 +75,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     }
                     if ui
                         .add_enabled(
-                            app.doc.is_some(),
+                            app.has_doc(),
                             egui::Button::new(format!(
                                 "\u{21C4}  {}",
                                 app.i18n.t("action-convert", &[])
@@ -185,9 +185,9 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         .button(format!("\u{21B6}  {}", app.i18n.t("action-undo", &[])))
                         .clicked()
                     {
-                        if let Some(doc) = app.doc.as_mut() {
-                            if doc.undo() {
-                                app.texture_dirty = true;
+                        if let Some(tab) = app.active_tab_mut() {
+                            if tab.doc.undo() {
+                                tab.texture_dirty = true;
                             }
                         }
                         ui.close_menu();
@@ -196,9 +196,9 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         .button(format!("\u{21B7}  {}", app.i18n.t("action-redo", &[])))
                         .clicked()
                     {
-                        if let Some(doc) = app.doc.as_mut() {
-                            if doc.redo() {
-                                app.texture_dirty = true;
+                        if let Some(tab) = app.active_tab_mut() {
+                            if tab.doc.redo() {
+                                tab.texture_dirty = true;
                             }
                         }
                         ui.close_menu();
@@ -210,7 +210,9 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         .button(format!("\u{26F6}  {}", app.i18n.t("action-fit", &[])))
                         .clicked()
                     {
-                        app.viewer.reset_view = true;
+                        if let Some(tab) = app.active_tab_mut() {
+                            tab.viewer.reset_view = true;
+                        }
                         ui.close_menu();
                     }
                     if ui
@@ -220,7 +222,9 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         ))
                         .clicked()
                     {
-                        app.viewer.zoom = 1.0;
+                        if let Some(tab) = app.active_tab_mut() {
+                            tab.viewer.zoom = 1.0;
+                        }
                         ui.close_menu();
                     }
                     ui.separator();

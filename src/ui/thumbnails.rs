@@ -58,7 +58,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         .on_hover_text(app.i18n.t("thumbs-refresh", &[]))
                         .clicked()
                     {
-                        if let Some(doc) = &app.doc {
+                        if let Some(doc) = app.active_doc() {
                             if let Some(path) = &doc.path {
                                 let p = path.clone();
                                 app.scan_folder_now(&p);
@@ -76,7 +76,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                 return;
             }
 
-            let current_path = app.doc.as_ref().and_then(|d| d.path.as_ref()).cloned();
+            let current_path = app.active_doc().and_then(|d| d.path.as_ref()).cloned();
             let mut nav_target: Option<PathBuf> = None;
             let panel_w = ui.available_width();
             let thumb_size = Vec2::splat((panel_w - 20.0).clamp(60.0, THUMB_MAX_DIM as f32));
@@ -159,7 +159,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                 });
 
             if let Some(p) = nav_target {
-                app.open_path(&p);
+                app.open_path(&p, false);
             }
         });
 }

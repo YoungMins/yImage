@@ -476,6 +476,7 @@ fn show_region_crop(ctx: &egui::Context, app: &mut YImageApp) {
             let _ = app.tx.send(BgMsg::ImageLoaded {
                 path,
                 image: cropped,
+                new_tab: true,
             });
         } else {
             app.dialog.region_crop = None;

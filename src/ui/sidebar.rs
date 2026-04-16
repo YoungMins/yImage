@@ -40,7 +40,7 @@ fn show_image_properties(ui: &mut egui::Ui, app: &YImageApp) {
     egui::CollapsingHeader::new(app.i18n.t("inspector-properties", &[]))
         .default_open(true)
         .show(ui, |ui| {
-            let Some(doc) = &app.doc else {
+            let Some(doc) = app.active_doc() else {
                 ui.weak(app.i18n.t("sidebar-empty", &[]));
                 return;
             };
@@ -289,7 +289,7 @@ fn bg_remove_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
     if status.ready
         && ui
             .add_enabled(
-                app.doc.is_some(),
+                app.has_doc(),
                 egui::Button::new(app.i18n.t("action-run", &[])),
             )
             .clicked()
@@ -310,7 +310,7 @@ fn obj_remove_panel(ui: &mut egui::Ui, app: &mut YImageApp) {
             }
             if ui
                 .add_enabled(
-                    app.doc.is_some() && app.dialog.obj_mask.is_some(),
+                    app.has_doc() && app.dialog.obj_mask.is_some(),
                     egui::Button::new(app.i18n.t("action-run", &[])),
                 )
                 .clicked()

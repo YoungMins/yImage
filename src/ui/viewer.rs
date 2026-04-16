@@ -16,7 +16,7 @@ pub struct ViewerState {
 
 pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
     egui::CentralPanel::default().show(ctx, |ui| {
-        if app.doc.is_none() {
+        if app.tabs.is_empty() {
             let avail = ui.available_size();
             ui.allocate_ui_at_rect(
                 egui::Rect::from_center_size(
@@ -58,7 +58,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                                 )
                                 .pick_file()
                             {
-                                app.open_path(&p);
+                                app.open_path(&p, true);
                             }
                         }
                         ui.add_space(8.0);
@@ -69,45 +69,55 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
             return;
         }
 
-        // Rebuild the texture if the document changed.
-        if app.texture_dirty || app.texture.is_none() {
-            if let Some(doc) = &app.doc {
-                let size = [doc.width() as usize, doc.height() as usize];
-                let pixels: Vec<Color32> = doc
-                    .image
-                    .pixels()
-                    .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
-                    .collect();
-                let color_img = ColorImage {
-                    size,
-                    source_size: egui::vec2(size[0] as f32, size[1] as f32),
-                    pixels,
-                };
-                let tex = ctx.load_texture("yimage_doc", color_img, TextureOptions::LINEAR);
-                app.texture = Some(tex);
-                app.texture_dirty = false;
-            }
+        let idx = app.active_tab;
+        if idx >= app.tabs.len() {
+            return;
         }
 
-        let Some(tex) = app.texture.as_ref() else {
+        // Rebuild the texture if the document changed.
+        if app.tabs[idx].texture_dirty || app.tabs[idx].texture.is_none() {
+            let doc = &app.tabs[idx].doc;
+            let size = [doc.width() as usize, doc.height() as usize];
+            let pixels: Vec<Color32> = doc
+                .image
+                .pixels()
+                .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
+                .collect();
+            let color_img = ColorImage {
+                size,
+                source_size: egui::vec2(size[0] as f32, size[1] as f32),
+                pixels,
+            };
+            let tex = ctx.load_texture(
+                format!("yimage_tab_{}", app.tabs[idx].id),
+                color_img,
+                TextureOptions::LINEAR,
+            );
+            app.tabs[idx].texture = Some(tex);
+            app.tabs[idx].texture_dirty = false;
+        }
+
+        let Some(tex) = app.tabs[idx].texture.as_ref() else {
             return;
         };
 
         let avail = ui.available_rect_before_wrap();
-        let doc = app.doc.as_ref().unwrap();
-        let img_size = Vec2::new(doc.width() as f32, doc.height() as f32);
+        let img_size = Vec2::new(
+            app.tabs[idx].doc.width() as f32,
+            app.tabs[idx].doc.height() as f32,
+        );
 
         // Initial fit or explicit reset.
-        if app.viewer.zoom == 0.0 || app.viewer.reset_view {
+        if app.tabs[idx].viewer.zoom == 0.0 || app.tabs[idx].viewer.reset_view {
             let sx = avail.width() / img_size.x;
             let sy = avail.height() / img_size.y;
-            app.viewer.zoom = sx.min(sy).clamp(0.05, 1.0);
-            app.viewer.offset = Vec2::ZERO;
-            app.viewer.reset_view = false;
+            app.tabs[idx].viewer.zoom = sx.min(sy).clamp(0.05, 1.0);
+            app.tabs[idx].viewer.offset = Vec2::ZERO;
+            app.tabs[idx].viewer.reset_view = false;
         }
 
-        let display_size = img_size * app.viewer.zoom;
-        let center = avail.center() + app.viewer.offset;
+        let display_size = img_size * app.tabs[idx].viewer.zoom;
+        let center = avail.center() + app.tabs[idx].viewer.offset;
         let rect = Rect::from_center_size(center, display_size);
 
         let response = ui.allocate_rect(avail, Sense::click_and_drag());
@@ -116,7 +126,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         if response.dragged_by(egui::PointerButton::Middle)
             || response.dragged_by(egui::PointerButton::Secondary)
         {
-            app.viewer.offset += response.drag_delta();
+            app.tabs[idx].viewer.offset += response.drag_delta();
         }
 
         // Zoom with mouse wheel, anchored on the cursor.
@@ -124,13 +134,13 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
             let scroll = i.smooth_scroll_delta.y;
             if scroll != 0.0 && response.hovered() {
                 let factor = (scroll * 0.002).exp();
-                let old_zoom = app.viewer.zoom;
+                let old_zoom = app.tabs[idx].viewer.zoom;
                 let new_zoom = (old_zoom * factor).clamp(0.02, 32.0);
                 if let Some(pos) = i.pointer.hover_pos() {
                     let delta = pos - center;
-                    app.viewer.offset += delta * (1.0 - new_zoom / old_zoom);
+                    app.tabs[idx].viewer.offset += delta * (1.0 - new_zoom / old_zoom);
                 }
-                app.viewer.zoom = new_zoom;
+                app.tabs[idx].viewer.zoom = new_zoom;
             }
         });
 
@@ -154,28 +164,36 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                 app.navigate(-1);
             }
             if i.modifiers.ctrl && i.key_pressed(egui::Key::Z) {
-                if let Some(doc) = app.doc.as_mut() {
-                    if doc.undo() {
-                        app.texture_dirty = true;
+                if let Some(tab) = app.tabs.get_mut(app.active_tab) {
+                    if tab.doc.undo() {
+                        tab.texture_dirty = true;
                     }
                 }
             }
             if i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::Z) {
-                if let Some(doc) = app.doc.as_mut() {
-                    if doc.redo() {
-                        app.texture_dirty = true;
+                if let Some(tab) = app.tabs.get_mut(app.active_tab) {
+                    if tab.doc.redo() {
+                        tab.texture_dirty = true;
                     }
                 }
             }
             if i.modifiers.ctrl && i.key_pressed(egui::Key::S) {
                 app.dialog.save_dialog_open = true;
             }
+            if i.modifiers.ctrl && i.key_pressed(egui::Key::W) {
+                if !app.tabs.is_empty() {
+                    app.close_tab(app.active_tab);
+                }
+            }
         });
     });
 }
 
 fn handle_tool_input(app: &mut YImageApp, response: &egui::Response, rect: Rect, img_size: Vec2) {
-    let Some(doc) = app.doc.as_mut() else { return };
+    if app.tabs.is_empty() || app.active_tab >= app.tabs.len() {
+        return;
+    }
+    let idx = app.active_tab;
 
     let screen_to_image = |pos: Pos2| -> Option<(f32, f32)> {
         let rel = pos - rect.min;
@@ -190,14 +208,14 @@ fn handle_tool_input(app: &mut YImageApp, response: &egui::Response, rect: Rect,
     match app.tool {
         ToolKind::Draw => {
             if response.drag_started_by(egui::PointerButton::Primary) {
-                doc.push_undo();
+                app.tabs[idx].doc.push_undo();
                 app.dialog.brush.begin();
             }
             if response.dragged_by(egui::PointerButton::Primary) {
                 if let Some(pos) = response.interact_pointer_pos() {
                     if let Some(img_pos) = screen_to_image(pos) {
-                        app.dialog.brush.stroke(&mut doc.image, img_pos);
-                        app.texture_dirty = true;
+                        app.dialog.brush.stroke(&mut app.tabs[idx].doc.image, img_pos);
+                        app.tabs[idx].texture_dirty = true;
                     }
                 }
             }
@@ -223,13 +241,13 @@ fn handle_tool_input(app: &mut YImageApp, response: &egui::Response, rect: Rect,
                     let x1 = start.0.max(end.0) as u32;
                     let y1 = start.1.max(end.1) as u32;
                     if x1 > x0 && y1 > y0 {
-                        doc.push_undo();
+                        app.tabs[idx].doc.push_undo();
                         crate::tools::mosaic::apply_mosaic(
-                            &mut doc.image,
+                            &mut app.tabs[idx].doc.image,
                             (x0, y0, x1 - x0, y1 - y0),
                             app.dialog.mosaic.block_size,
                         );
-                        app.texture_dirty = true;
+                        app.tabs[idx].texture_dirty = true;
                     }
                 }
                 app.dialog.mosaic_start = None;
@@ -241,9 +259,11 @@ fn handle_tool_input(app: &mut YImageApp, response: &egui::Response, rect: Rect,
             {
                 if let Some(pos) = response.interact_pointer_pos() {
                     if let Some(img_pos) = screen_to_image(pos) {
-                        doc.push_undo();
-                        app.dialog.text.stamp(&mut doc.image, img_pos.0, img_pos.1);
-                        app.texture_dirty = true;
+                        app.tabs[idx].doc.push_undo();
+                        app.dialog
+                            .text
+                            .stamp(&mut app.tabs[idx].doc.image, img_pos.0, img_pos.1);
+                        app.tabs[idx].texture_dirty = true;
                     }
                 }
             }
@@ -261,16 +281,21 @@ fn handle_tool_input(app: &mut YImageApp, response: &egui::Response, rect: Rect,
                     app.dialog.shape_start,
                     response.interact_pointer_pos().and_then(screen_to_image),
                 ) {
-                    doc.push_undo();
-                    app.dialog.shape.commit(&mut doc.image, start, end);
-                    app.texture_dirty = true;
+                    app.tabs[idx].doc.push_undo();
+                    app.dialog
+                        .shape
+                        .commit(&mut app.tabs[idx].doc.image, start, end);
+                    app.tabs[idx].texture_dirty = true;
                 }
                 app.dialog.shape_start = None;
             }
         }
         ToolKind::ObjectRemove => {
             if response.drag_started_by(egui::PointerButton::Primary) {
-                let (w, h) = (doc.width(), doc.height());
+                let (w, h) = (
+                    app.tabs[idx].doc.width(),
+                    app.tabs[idx].doc.height(),
+                );
                 if app.dialog.obj_mask.is_none() {
                     app.dialog.obj_mask = Some(image::GrayImage::new(w, h));
                 }
@@ -354,8 +379,6 @@ fn draw_overlays(
                 }
                 ShapeKind::Ellipse | ShapeKind::EllipseFilled => {
                     let r = Rect::from_two_pos(start_screen, hover);
-                    // egui has no ellipse primitive; approximate with circle
-                    // using max-radius for a quick visual aid.
                     let center = r.center();
                     let rx = r.width().abs() * 0.5;
                     let ry = r.height().abs() * 0.5;
@@ -394,8 +417,6 @@ fn draw_overlays(
     // Object-removal mask: visualise the painted mask with a red overlay.
     if app.tool == ToolKind::ObjectRemove {
         if let Some(mask) = app.dialog.obj_mask.as_ref() {
-            // Coarse sampled indicator — full-resolution mask rendering would
-            // require uploading a new texture every frame.
             let scale = rect.width() / img_size.x.max(1.0);
             let sample_step = 8u32.max((mask.width() / 256).max(1));
             let dot = Color32::from_rgba_unmultiplied(0xE0, 0x20, 0x20, 140);

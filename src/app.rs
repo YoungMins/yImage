@@ -20,12 +20,48 @@ use crate::ui;
 #[cfg(all(windows, feature = "capture"))]
 use crate::hotkeys::{HotkeyAction, HotkeyRegistry};
 
+// ── Tab ─────────────────────────────────────────────────────────────
+
+/// A single editor tab: document + per-tab view/texture state.
+pub struct Tab {
+    pub id: usize,
+    pub doc: Document,
+    pub texture: Option<egui::TextureHandle>,
+    pub texture_dirty: bool,
+    pub viewer: ui::viewer::ViewerState,
+}
+
+impl Tab {
+    pub fn new(id: usize, doc: Document) -> Self {
+        Self {
+            id,
+            doc,
+            texture: None,
+            texture_dirty: true,
+            viewer: ui::viewer::ViewerState::default(),
+        }
+    }
+
+    pub fn title(&self) -> String {
+        self.doc
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|f| f.to_str())
+            .unwrap_or("Untitled")
+            .to_string()
+    }
+}
+
+// ── Messages ────────────────────────────────────────────────────────
+
 /// Messages background workers can post to the UI thread.
 #[derive(Debug)]
 pub enum BgMsg {
     ImageLoaded {
         path: PathBuf,
         image: image::RgbaImage,
+        new_tab: bool,
     },
     ImageSaved(PathBuf),
     Progress(String, f32),
@@ -142,7 +178,9 @@ impl Default for Settings {
 }
 
 pub struct YImageApp {
-    pub doc: Option<Document>,
+    pub tabs: Vec<Tab>,
+    pub active_tab: usize,
+    next_tab_id: usize,
     pub tool: ToolKind,
     pub i18n: I18n,
     pub settings: Settings,
@@ -150,10 +188,7 @@ pub struct YImageApp {
     pub progress: Option<(String, f32)>,
     pub tx: Sender<BgMsg>,
     pub rx: Receiver<BgMsg>,
-    pub viewer: ui::viewer::ViewerState,
     pub dialog: ui::dialogs::DialogState,
-    pub texture: Option<egui::TextureHandle>,
-    pub texture_dirty: bool,
     pub folder_entries: Arc<Mutex<Vec<PathBuf>>>,
     pub folder_index: usize,
     pub pending_action: StartupAction,
@@ -187,7 +222,9 @@ impl YImageApp {
         thumbs.visible = settings.thumbs_visible;
 
         let mut app = Self {
-            doc: None,
+            tabs: Vec::new(),
+            active_tab: 0,
+            next_tab_id: 0,
             tool: ToolKind::None,
             i18n,
             settings,
@@ -195,10 +232,7 @@ impl YImageApp {
             progress: None,
             tx,
             rx,
-            viewer: ui::viewer::ViewerState::default(),
             dialog: ui::dialogs::DialogState::default(),
-            texture: None,
-            texture_dirty: false,
             folder_entries: Arc::new(Mutex::new(Vec::new())),
             folder_index: 0,
             pending_action: startup_action,
@@ -222,10 +256,50 @@ impl YImageApp {
         }
 
         if let Some(path) = startup_file {
-            app.open_path(&path);
+            app.open_path(&path, true);
         }
 
         app
+    }
+
+    // ── Tab helpers ─────────────────────────────────────────────────
+
+    pub fn has_doc(&self) -> bool {
+        !self.tabs.is_empty()
+    }
+
+    pub fn active_doc(&self) -> Option<&Document> {
+        self.tabs.get(self.active_tab).map(|t| &t.doc)
+    }
+
+    pub fn active_doc_mut(&mut self) -> Option<&mut Document> {
+        self.tabs.get_mut(self.active_tab).map(|t| &mut t.doc)
+    }
+
+    pub fn active_tab_mut(&mut self) -> Option<&mut Tab> {
+        self.tabs.get_mut(self.active_tab)
+    }
+
+    pub fn set_texture_dirty(&mut self) {
+        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+            tab.texture_dirty = true;
+        }
+    }
+
+    fn add_tab(&mut self, doc: Document) {
+        let id = self.next_tab_id;
+        self.next_tab_id += 1;
+        self.tabs.push(Tab::new(id, doc));
+        self.active_tab = self.tabs.len() - 1;
+    }
+
+    pub fn close_tab(&mut self, index: usize) {
+        if index < self.tabs.len() {
+            self.tabs.remove(index);
+            if self.active_tab >= self.tabs.len() && !self.tabs.is_empty() {
+                self.active_tab = self.tabs.len() - 1;
+            }
+        }
     }
 
     fn apply_pending_action(&mut self) {
@@ -237,7 +311,7 @@ impl YImageApp {
             }
             StartupAction::Resize => {
                 self.dialog.resize_open = true;
-                if let Some(doc) = &self.doc {
+                if let Some(doc) = self.active_doc() {
                     self.dialog.resize_w = doc.width();
                     self.dialog.resize_h = doc.height();
                 }
@@ -257,7 +331,7 @@ impl YImageApp {
     }
 
     pub fn run_background_remove(&mut self) {
-        let Some(doc) = self.doc.as_ref() else { return };
+        let Some(doc) = self.active_doc() else { return };
         let image = doc.image.clone();
         let tx = self.tx.clone();
         let label = self.i18n.t("tool-bg-remove", &[]);
@@ -269,6 +343,7 @@ impl YImageApp {
                     let _ = tx.send(BgMsg::ImageLoaded {
                         path: PathBuf::new(),
                         image: out,
+                        new_tab: false,
                     });
                     let _ = tx.send(BgMsg::Progress(label, 1.0));
                 }
@@ -285,7 +360,7 @@ impl YImageApp {
     }
 
     pub fn run_object_remove(&mut self) {
-        let Some(doc) = self.doc.as_ref() else { return };
+        let Some(doc) = self.active_doc() else { return };
         let Some(mask) = self.dialog.obj_mask.clone() else {
             return;
         };
@@ -300,6 +375,7 @@ impl YImageApp {
                     let _ = tx.send(BgMsg::ImageLoaded {
                         path: PathBuf::new(),
                         image: out,
+                        new_tab: false,
                     });
                     let _ = tx.send(BgMsg::Progress(label, 1.0));
                 }
@@ -347,14 +423,18 @@ impl YImageApp {
         });
     }
 
-    pub fn open_path(&mut self, path: &Path) {
+    pub fn open_path(&mut self, path: &Path, new_tab: bool) {
         let tx = self.tx.clone();
         let path = path.to_path_buf();
         self.settings.last_folder = path.parent().map(Path::to_path_buf);
         self.scan_folder(&path);
         rayon::spawn(move || match load_image(&path) {
             Ok(img) => {
-                let _ = tx.send(BgMsg::ImageLoaded { path, image: img });
+                let _ = tx.send(BgMsg::ImageLoaded {
+                    path,
+                    image: img,
+                    new_tab,
+                });
             }
             Err(e) => {
                 let _ = tx.send(BgMsg::Error(format!("{e:#}")));
@@ -390,8 +470,7 @@ impl YImageApp {
             return;
         }
         let current = self
-            .doc
-            .as_ref()
+            .active_doc()
             .and_then(|d| d.path.as_ref())
             .and_then(|p| entries.iter().position(|e| e == p))
             .unwrap_or(self.folder_index);
@@ -399,7 +478,7 @@ impl YImageApp {
         let next = ((current as isize + delta).rem_euclid(len)) as usize;
         self.folder_index = next;
         let path = entries[next].clone();
-        self.open_path(&path);
+        self.open_path(&path, false);
     }
 
     /// High-level menu/hotkey entry point for all capture modes.
@@ -498,7 +577,11 @@ impl YImageApp {
                         let _ = tx.send(BgMsg::Error(format!("save capture: {e:#}")));
                         return;
                     }
-                    let _ = tx.send(BgMsg::ImageLoaded { path, image: img });
+                    let _ = tx.send(BgMsg::ImageLoaded {
+                        path,
+                        image: img,
+                        new_tab: true,
+                    });
                 }
                 Err(e) => {
                     let _ = tx.send(BgMsg::Error(format!("capture: {e:#}")));
@@ -549,21 +632,37 @@ impl YImageApp {
     fn poll_messages(&mut self, ctx: &egui::Context) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                BgMsg::ImageLoaded { path, image } => {
-                    let keep_path = if path.as_os_str().is_empty() {
-                        self.doc.as_ref().and_then(|d| d.path.clone())
-                    } else {
-                        Some(path.clone())
-                    };
-                    let doc = Document::from_rgba(image, keep_path.clone());
-                    self.doc = Some(doc);
-                    self.texture_dirty = true;
-                    if let Some(p) = keep_path.as_ref() {
+                BgMsg::ImageLoaded {
+                    path,
+                    image,
+                    new_tab,
+                } => {
+                    if path.as_os_str().is_empty() {
+                        // AI operation result — update current tab in-place.
+                        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+                            let keep_path = tab.doc.path.clone();
+                            tab.doc = Document::from_rgba(image, keep_path);
+                            tab.texture_dirty = true;
+                            tab.viewer.reset_view = true;
+                        }
+                    } else if new_tab || self.tabs.is_empty() {
+                        let doc = Document::from_rgba(image, Some(path.clone()));
+                        self.add_tab(doc);
                         self.status = self
                             .i18n
-                            .t("status-loaded", &[("path", p.display().to_string())]);
+                            .t("status-loaded", &[("path", path.display().to_string())]);
+                    } else {
+                        // Replace current tab (folder navigation).
+                        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+                            tab.doc =
+                                Document::from_rgba(image, Some(path.clone()));
+                            tab.texture_dirty = true;
+                            tab.viewer.reset_view = true;
+                        }
+                        self.status = self
+                            .i18n
+                            .t("status-loaded", &[("path", path.display().to_string())]);
                     }
-                    self.viewer.reset_view = true;
                     self.progress = None;
                     self.apply_pending_action();
                     ctx.request_repaint();
@@ -624,16 +723,18 @@ impl eframe::App for YImageApp {
             let _ = self
                 .tx
                 .send(BgMsg::Info(format!("opening {}", path.display())));
-            self.open_path(&path);
+            self.open_path(&path, true);
         }
 
         // Declaration order matters for egui panel layout:
         // 1. Top panel  → occupies full width at top.
+        // 1b. Tab bar   → directly below the toolbar.
         // 2. Bottom panel → occupies full width at bottom (must come before side panels).
         // 3. Left side panels (outermost → innermost, i.e. tool rail first, then thumbnails).
         // 4. Right side panel.
         // 5. CentralPanel → fills whatever remains.
         ui::toolbar::show(&ctx, self);
+        ui::tabbar::show(&ctx, self);
         ui::statusbar::show(&ctx, self);
         ui::toolpanel::show(&ctx, self);
         ui::thumbnails::show(&ctx, self);

@@ -104,7 +104,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
 }
 
 fn resize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
-    let Some(doc) = app.doc.as_ref() else {
+    let Some(doc) = app.active_doc() else {
         app.dialog.resize_open = false;
         return;
     };
@@ -167,7 +167,7 @@ fn resize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
     app.dialog.resize_open = open;
 
     if apply {
-        if let Some(doc) = app.doc.as_mut() {
+        if let Some(doc) = app.active_doc_mut() {
             match resize_rgba(
                 &doc.image,
                 app.dialog.resize_w,
@@ -176,7 +176,7 @@ fn resize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
             ) {
                 Ok(new_img) => {
                     doc.replace(new_img);
-                    app.texture_dirty = true;
+                    app.set_texture_dirty();
                     app.dialog.resize_open = false;
                 }
                 Err(e) => {
@@ -212,7 +212,7 @@ fn convert_dialog(ctx: &egui::Context, app: &mut YImageApp) {
     app.dialog.convert_open = open;
 
     if pick_and_save {
-        let Some(doc) = app.doc.as_ref() else { return };
+        let Some(doc) = app.active_doc() else { return };
         let default_name = doc
             .path
             .as_ref()
@@ -266,7 +266,7 @@ fn optimize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
     app.dialog.optimize_open = open;
 
     if run {
-        let Some(doc) = app.doc.as_ref() else { return };
+        let Some(doc) = app.active_doc() else { return };
         let default_path = doc
             .path
             .clone()
@@ -308,7 +308,7 @@ fn optimize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
 }
 
 fn save_as_dialog(app: &mut YImageApp) {
-    let Some(doc) = app.doc.as_ref() else { return };
+    let Some(doc) = app.active_doc() else { return };
     let default_name = doc
         .path
         .as_ref()
