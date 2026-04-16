@@ -22,7 +22,7 @@ use once_cell::sync::OnceCell;
 #[cfg(feature = "ai")]
 use ort::session::Session;
 
-pub const MODEL_FILE: &str = "lama-fp16.onnx";
+pub const MODEL_FILE: &str = "lama.onnx";
 
 #[cfg(feature = "ai")]
 static SESSION: OnceCell<parking_lot::Mutex<Session>> = OnceCell::new();

@@ -453,11 +453,29 @@ impl YImageApp {
     /// document pipeline. Used by modes that don't need the region-crop
     /// overlay (Fullscreen / pre-saved FixedRegion / post-countdown
     /// ActiveWindow / AutoScroll).
+    ///
+    /// For modes that capture the full monitor (Fullscreen, Region,
+    /// FixedRegion) the yImage window is minimized first so it doesn't
+    /// appear in the screenshot. The window is restored after the capture.
     #[cfg(all(windows, feature = "capture"))]
     pub fn spawn_capture_immediate(&mut self, mode: crate::capture::CaptureMode) {
         use crate::capture::CaptureMode;
         let tx = self.tx.clone();
+
+        // Grab our window handle while on the UI thread so we can
+        // minimize/restore from the background thread.
+        let needs_hide = matches!(
+            mode,
+            CaptureMode::Fullscreen | CaptureMode::Region | CaptureMode::FixedRegion { .. }
+        );
+        let hwnd = if needs_hide { self_hwnd() } else { None };
+
         std::thread::spawn(move || {
+            if let Some(h) = hwnd {
+                minimize_window(h);
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+
             let result = match mode {
                 CaptureMode::Fullscreen => crate::capture::capture_primary_screen(),
                 CaptureMode::ActiveWindow => crate::capture::capture_active_window(),
@@ -467,6 +485,11 @@ impl YImageApp {
                 }
                 CaptureMode::AutoScroll => crate::capture::capture_auto_scroll(20, 350),
             };
+
+            if let Some(h) = hwnd {
+                restore_window(h);
+            }
+
             match result {
                 Ok(img) => {
                     let path =
@@ -487,15 +510,31 @@ impl YImageApp {
     /// Capture a fullscreen screenshot in the background and, when it
     /// completes, post a `CaptureScreenshot` message so the UI thread can
     /// open the region-crop overlay.
+    ///
+    /// Minimizes yImage first so the screenshot shows the actual desktop.
     #[cfg(all(windows, feature = "capture"))]
     fn spawn_capture_screenshot_for_crop(&mut self, mode: crate::capture::CaptureMode) {
         let tx = self.tx.clone();
-        std::thread::spawn(move || match crate::capture::capture_primary_screen() {
-            Ok(img) => {
-                let _ = tx.send(BgMsg::CaptureScreenshot { image: img, mode });
+        let hwnd = self_hwnd();
+        std::thread::spawn(move || {
+            if let Some(h) = hwnd {
+                minimize_window(h);
+                std::thread::sleep(std::time::Duration::from_millis(400));
             }
-            Err(e) => {
-                let _ = tx.send(BgMsg::Error(format!("capture: {e:#}")));
+
+            let result = crate::capture::capture_primary_screen();
+
+            if let Some(h) = hwnd {
+                restore_window(h);
+            }
+
+            match result {
+                Ok(img) => {
+                    let _ = tx.send(BgMsg::CaptureScreenshot { image: img, mode });
+                }
+                Err(e) => {
+                    let _ = tx.send(BgMsg::Error(format!("capture: {e:#}")));
+                }
             }
         });
     }
@@ -626,4 +665,34 @@ pub(crate) fn unix_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0)
+}
+
+/// Find the yImage window handle by enumerating windows owned by our process.
+/// Returns `None` if no matching window is found (e.g. on non-Windows).
+#[cfg(all(windows, feature = "capture"))]
+fn self_hwnd() -> Option<windows::Win32::Foundation::HWND> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd == HWND::default() {
+        None
+    } else {
+        Some(hwnd)
+    }
+}
+
+#[cfg(all(windows, feature = "capture"))]
+fn minimize_window(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_MINIMIZE};
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_MINIMIZE);
+    }
+}
+
+#[cfg(all(windows, feature = "capture"))]
+fn restore_window(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_RESTORE};
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+    }
 }
