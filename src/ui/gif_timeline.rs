@@ -227,10 +227,16 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
                             egui::Stroke::new(1.0, Color32::from_gray(80))
                         });
 
+                    // Fixed card width so frames don't stretch to
+                    // fill the scroll area when there are few of them.
+                    const THUMB: f32 = 80.0;
+                    const CARD_W: f32 = THUMB + 16.0; // thumb + inner margin
+
                     let resp = card
                         .show(ui, |ui| {
+                            ui.set_width(CARD_W);
                             ui.vertical_centered(|ui| {
-                                let size = Vec2::splat(96.0);
+                                let size = Vec2::splat(THUMB);
                                 if let Some(t) = tex {
                                     ui.add(
                                         egui::Image::new((t.id(), size))
