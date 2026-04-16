@@ -2,9 +2,7 @@
 //
 // Left column:  1) Add frames, 2) Timeline with drag reorder, 3) Playback settings
 // Right column: 4) Preview & export — fills available height for a larger preview.
-//
-// The builder is shown as a real OS-level window via show_viewport_immediate
-// (requires wgpu backend with embed_viewports = false).
+// The window is unconstrained so it can be dragged beyond the app bounds.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -53,34 +51,31 @@ pub struct GifFrame {
     pub texture: Option<TextureHandle>,
 }
 
-/// Entry point: shows the GIF builder as a real OS-level window.
-/// Must be called every frame when `gif_timeline_open` is true.
+/// Entry point: shows the GIF builder as an egui Window.
 pub fn show_viewport(ctx: &egui::Context, app: &mut YImageApp) {
     if !app.dialog.gif_timeline_open {
         return;
     }
 
-    let title = format!(
-        "\u{1F39E}  {}",
-        app.i18n.t("gif-builder-title", &[])
-    );
+    if app.dialog.gif.playing {
+        ctx.request_repaint_after(std::time::Duration::from_millis(16));
+    }
 
-    ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("gif-builder"),
-        egui::ViewportBuilder::default()
-            .with_title(title)
-            .with_inner_size([1000.0, 620.0])
-            .with_min_inner_size([700.0, 400.0]),
-        |vp_ctx, _class| {
-            // Close when the user clicks the OS window's X button.
-            if vp_ctx.input(|i| i.viewport().close_requested()) {
-                app.dialog.gif_timeline_open = false;
-            }
-            egui::CentralPanel::default().show(vp_ctx, |ui| {
-                show_content(vp_ctx, ui, app);
-            });
-        },
-    );
+    let mut open = app.dialog.gif_timeline_open;
+    egui::Window::new(
+        RichText::new(format!("\u{1F39E}  {}", app.i18n.t("gif-builder-title", &[]))).size(15.0),
+    )
+    .open(&mut open)
+    .default_size([1000.0, 620.0])
+    .min_width(700.0)
+    .min_height(520.0)
+    .resizable(true)
+    .collapsible(true)
+    .constrain(false)
+    .show(ctx, |ui| {
+        show_content(ctx, ui, app);
+    });
+    app.dialog.gif_timeline_open = open;
 }
 
 /// Render the GIF builder content into any Ui (viewport or embedded).
