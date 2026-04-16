@@ -34,6 +34,19 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                             app.has_doc(),
                             egui::Button::new(format!(
                                 "\u{1F4BE}  {}",
+                                app.i18n.t("action-save", &[])
+                            )),
+                        )
+                        .clicked()
+                    {
+                        app.save_current();
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add_enabled(
+                            app.has_doc(),
+                            egui::Button::new(format!(
+                                "\u{1F4BE}  {}",
                                 app.i18n.t("action-save-as", &[])
                             )),
                         )

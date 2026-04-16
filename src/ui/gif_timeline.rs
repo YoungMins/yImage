@@ -2,7 +2,9 @@
 //
 // Left column:  1) Add frames, 2) Timeline with drag reorder, 3) Playback settings
 // Right column: 4) Preview & export — fills available height for a larger preview.
-// The window is unconstrained so it can be dragged beyond the app bounds.
+//
+// The builder is shown as a real OS-level window via show_viewport_immediate
+// (requires wgpu backend with embed_viewports = false).
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -11,6 +13,9 @@ use egui::{Color32, ColorImage, Rect, RichText, Sense, TextureHandle, TextureOpt
 
 use crate::app::{BgMsg, YImageApp};
 use crate::ui::thumbnails::THUMB_MAX_DIM;
+
+/// Maximum pixel dimension for the high-resolution preview texture.
+const PREVIEW_MAX_DIM: u32 = 512;
 
 pub struct GifTimelineState {
     pub frames: Vec<GifFrame>,
@@ -22,6 +27,8 @@ pub struct GifTimelineState {
     pub open: bool,
     /// Index of the frame currently being dragged (for reorder).
     pub drag_from: Option<usize>,
+    /// Cached high-resolution preview texture for step 4 (path + handle).
+    pub preview_tex: Option<(PathBuf, TextureHandle)>,
 }
 
 impl Default for GifTimelineState {
@@ -35,6 +42,7 @@ impl Default for GifTimelineState {
             play_started: None,
             open: false,
             drag_from: None,
+            preview_tex: None,
         }
     }
 }
@@ -45,56 +53,69 @@ pub struct GifFrame {
     pub texture: Option<TextureHandle>,
 }
 
-pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
+/// Entry point: shows the GIF builder as a real OS-level window.
+/// Must be called every frame when `gif_timeline_open` is true.
+pub fn show_viewport(ctx: &egui::Context, app: &mut YImageApp) {
     if !app.dialog.gif_timeline_open {
         return;
     }
 
+    let title = format!(
+        "\u{1F39E}  {}",
+        app.i18n.t("gif-builder-title", &[])
+    );
+
+    ctx.show_viewport_immediate(
+        egui::ViewportId::from_hash_of("gif-builder"),
+        egui::ViewportBuilder::default()
+            .with_title(title)
+            .with_inner_size([1000.0, 620.0])
+            .with_min_inner_size([700.0, 400.0]),
+        |vp_ctx, _class| {
+            // Close when the user clicks the OS window's X button.
+            if vp_ctx.input(|i| i.viewport().close_requested()) {
+                app.dialog.gif_timeline_open = false;
+            }
+            egui::CentralPanel::default().show(vp_ctx, |ui| {
+                show_content(vp_ctx, ui, app);
+            });
+        },
+    );
+}
+
+/// Render the GIF builder content into any Ui (viewport or embedded).
+pub fn show_content(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
     if app.dialog.gif.playing {
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
 
-    let mut open = app.dialog.gif_timeline_open;
-    egui::Window::new(
-        RichText::new(format!("\u{1F39E}  {}", app.i18n.t("gif-builder-title", &[]))).size(15.0),
-    )
-    .open(&mut open)
-    .default_size([1000.0, 620.0])
-    .min_width(700.0)
-    .min_height(520.0)
-    .resizable(true)
-    .collapsible(true)
-    .constrain(false)
-    .show(ctx, |ui| {
-        if app.dialog.gif.frames.is_empty() {
-            empty_state(ui, app);
-        } else {
-            egui::SidePanel::right("gif-preview-panel")
-                .default_width(320.0)
-                .min_width(240.0)
-                .max_width(500.0)
-                .resizable(true)
-                .show_inside(ui, |ui| {
-                    step4_preview_export(ctx, ui, app);
-                });
+    if app.dialog.gif.frames.is_empty() {
+        empty_state(ui, app);
+    } else {
+        egui::SidePanel::right("gif-preview-panel")
+            .default_width(320.0)
+            .min_width(240.0)
+            .max_width(500.0)
+            .resizable(true)
+            .show_inside(ui, |ui| {
+                step4_preview_export(ctx, ui, app);
+            });
 
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    step1_add_frames(ui, app);
-                    ui.add_space(12.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-                    step2_timeline(ctx, ui, app);
-                    ui.add_space(12.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-                    step3_playback(ui, app);
-                    ui.add_space(12.0);
-                });
-        }
-    });
-    app.dialog.gif_timeline_open = open;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                step1_add_frames(ui, app);
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(8.0);
+                step2_timeline(ctx, ui, app);
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(8.0);
+                step3_playback(ui, app);
+                ui.add_space(12.0);
+            });
+    }
 }
 
 fn empty_state(ui: &mut egui::Ui, app: &mut YImageApp) {
@@ -166,6 +187,7 @@ fn step1_add_frames(ui: &mut egui::Ui, app: &mut YImageApp) {
             app.dialog.gif.playing = false;
             app.dialog.gif.play_started = None;
             app.dialog.gif.drag_from = None;
+            app.dialog.gif.preview_tex = None;
         }
         ui.add_space(8.0);
         ui.label(
@@ -203,7 +225,7 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
                     let path = app.dialog.gif.frames[i].path.clone();
                     let cached = app.dialog.gif.frames[i].texture.clone();
                     let tex = cached.or_else(|| {
-                        let t = ensure_gif_texture(ctx, &path);
+                        let t = ensure_thumb_texture(ctx, &path);
                         if let Some(t) = &t {
                             if let Some(f) = app.dialog.gif.frames.get_mut(i) {
                                 f.texture = Some(t.clone());
@@ -323,6 +345,7 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
                     } else if app.dialog.gif.selected == Some(i) {
                         app.dialog.gif.selected = Some(from);
                     }
+                    app.dialog.gif.preview_tex = None; // reset preview cache on reorder
                     app.dialog.gif.drag_from = Some(i);
                     break;
                 }
@@ -340,6 +363,7 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
     if let Some(i) = remove_request {
         if i < app.dialog.gif.frames.len() {
             app.dialog.gif.frames.remove(i);
+            app.dialog.gif.preview_tex = None;
             if app.dialog.gif.selected == Some(i) {
                 app.dialog.gif.selected = None;
             } else if let Some(s) = app.dialog.gif.selected {
@@ -353,6 +377,7 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
         let target = i as isize + delta;
         if target >= 0 && (target as usize) < app.dialog.gif.frames.len() {
             app.dialog.gif.frames.swap(i, target as usize);
+            app.dialog.gif.preview_tex = None;
             if app.dialog.gif.selected == Some(i) {
                 app.dialog.gif.selected = Some(target as usize);
             } else if app.dialog.gif.selected == Some(target as usize) {
@@ -397,9 +422,9 @@ fn step4_preview_export(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImage
 
     let frame_idx = current_preview_frame(&app.dialog.gif);
 
-    // Preview fills available height minus controls at bottom
+    // Preview fills available height minus controls at bottom.
     let avail = ui.available_rect_before_wrap();
-    let controls_h = 90.0;
+    let controls_h = 96.0;
     let preview_h = (avail.height() - controls_h).max(120.0);
 
     ui.allocate_ui_with_layout(
@@ -408,20 +433,11 @@ fn step4_preview_export(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImage
         |ui| {
             if let Some(i) = frame_idx {
                 let path = app.dialog.gif.frames[i].path.clone();
-                let cached = app.dialog.gif.frames[i].texture.clone();
-                let tex = cached.or_else(|| {
-                    let t = ensure_gif_texture(ctx, &path);
-                    if let Some(t) = &t {
-                        if let Some(f) = app.dialog.gif.frames.get_mut(i) {
-                            f.texture = Some(t.clone());
-                        }
-                    }
-                    t
-                });
+                let tex = ensure_preview_texture(ctx, &mut app.dialog.gif, &path);
                 match tex {
                     Some(t) => {
                         let max_w = ui.available_width();
-                        let max_h = ui.available_height() - 8.0;
+                        let max_h = (ui.available_height() - 8.0).max(1.0);
                         let size = t.size_vec2();
                         let scale = (max_w / size.x).min(max_h / size.y).clamp(0.05, 4.0);
                         let disp = size * scale;
@@ -441,60 +457,66 @@ fn step4_preview_export(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImage
 
     ui.add_space(6.0);
 
-    ui.horizontal(|ui| {
-        let play_label = if app.dialog.gif.playing {
-            format!("\u{23F8}  {}", app.i18n.t("gif-pause", &[]))
-        } else {
-            format!("\u{25B6}  {}", app.i18n.t("gif-play", &[]))
-        };
-        if ui
-            .add_enabled(
-                app.dialog.gif.frames.len() >= 2,
-                egui::Button::new(play_label).min_size(Vec2::new(100.0, 28.0)),
-            )
-            .clicked()
-        {
-            if app.dialog.gif.playing {
+    // Play / Stop buttons — centered.
+    ui.vertical_centered(|ui| {
+        ui.horizontal(|ui| {
+            let play_label = if app.dialog.gif.playing {
+                format!("\u{23F8}  {}", app.i18n.t("gif-pause", &[]))
+            } else {
+                format!("\u{25B6}  {}", app.i18n.t("gif-play", &[]))
+            };
+            if ui
+                .add_enabled(
+                    app.dialog.gif.frames.len() >= 2,
+                    egui::Button::new(play_label).min_size(Vec2::new(100.0, 28.0)),
+                )
+                .clicked()
+            {
+                if app.dialog.gif.playing {
+                    app.dialog.gif.playing = false;
+                    app.dialog.gif.play_started = None;
+                } else {
+                    app.dialog.gif.playing = true;
+                    app.dialog.gif.play_started = Some(Instant::now());
+                }
+            }
+            if ui
+                .add_enabled(
+                    app.dialog.gif.playing,
+                    egui::Button::new(format!("\u{23F9}  {}", app.i18n.t("gif-stop", &[])))
+                        .min_size(Vec2::new(90.0, 28.0)),
+                )
+                .clicked()
+            {
                 app.dialog.gif.playing = false;
                 app.dialog.gif.play_started = None;
-            } else {
-                app.dialog.gif.playing = true;
-                app.dialog.gif.play_started = Some(Instant::now());
             }
-        }
-        if ui
-            .add_enabled(
-                app.dialog.gif.playing,
-                egui::Button::new(format!("\u{23F9}  {}", app.i18n.t("gif-stop", &[])))
-                    .min_size(Vec2::new(90.0, 28.0)),
-            )
-            .clicked()
-        {
-            app.dialog.gif.playing = false;
-            app.dialog.gif.play_started = None;
-        }
+        });
     });
 
     ui.add_space(6.0);
 
-    if ui
-        .add_enabled(
-            !app.dialog.gif.frames.is_empty(),
-            egui::Button::new(
-                RichText::new(format!(
-                    "  \u{1F4E4}  {}  ",
-                    app.i18n.t("gif-export", &[])
-                ))
-                .size(14.0)
-                .color(Color32::WHITE),
+    // Export button — right-aligned.
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if ui
+            .add_enabled(
+                !app.dialog.gif.frames.is_empty(),
+                egui::Button::new(
+                    RichText::new(format!(
+                        "  \u{1F4E4}  {}  ",
+                        app.i18n.t("gif-export", &[])
+                    ))
+                    .size(14.0)
+                    .color(Color32::WHITE),
+                )
+                .min_size(Vec2::new(160.0, 32.0))
+                .fill(super::theme::ACCENT),
             )
-            .min_size(Vec2::new(ui.available_width().min(200.0), 32.0))
-            .fill(super::theme::ACCENT),
-        )
-        .clicked()
-    {
-        export(app);
-    }
+            .clicked()
+        {
+            export(app);
+        }
+    });
 }
 
 fn section_header(ui: &mut egui::Ui, text: &str) {
@@ -583,23 +605,22 @@ fn export(app: &mut YImageApp) {
     });
 }
 
-fn ensure_gif_texture(ctx: &egui::Context, path: &std::path::Path) -> Option<TextureHandle> {
+/// Load and cache a thumbnail texture at THUMB_MAX_DIM for the timeline strip.
+fn ensure_thumb_texture(ctx: &egui::Context, path: &std::path::Path) -> Option<TextureHandle> {
     let img = crate::io::load::load_image(path).ok()?;
-    let (tw, th) = {
-        let max = THUMB_MAX_DIM;
-        if img.width() <= max && img.height() <= max {
-            (img.width(), img.height())
-        } else if img.width() >= img.height() {
-            (
-                max,
-                (max as f32 * img.height() as f32 / img.width() as f32) as u32,
-            )
-        } else {
-            (
-                (max as f32 * img.width() as f32 / img.height() as f32) as u32,
-                max,
-            )
-        }
+    let max = THUMB_MAX_DIM;
+    let (tw, th) = if img.width() <= max && img.height() <= max {
+        (img.width(), img.height())
+    } else if img.width() >= img.height() {
+        (
+            max,
+            (max as f32 * img.height() as f32 / img.width() as f32) as u32,
+        )
+    } else {
+        (
+            (max as f32 * img.width() as f32 / img.height() as f32) as u32,
+            max,
+        )
     };
     let small = crate::ops::resize::resize_rgba(
         &img,
@@ -614,7 +635,7 @@ fn ensure_gif_texture(ctx: &egui::Context, path: &std::path::Path) -> Option<Tex
         .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
         .collect();
     Some(ctx.load_texture(
-        format!("gif:{}", path.display()),
+        format!("gif-thumb:{}", path.display()),
         ColorImage {
             size,
             source_size: egui::vec2(size[0] as f32, size[1] as f32),
@@ -622,4 +643,56 @@ fn ensure_gif_texture(ctx: &egui::Context, path: &std::path::Path) -> Option<Tex
         },
         TextureOptions::LINEAR,
     ))
+}
+
+/// Load and cache a high-resolution preview texture (PREVIEW_MAX_DIM) for step 4.
+/// Only one frame is cached at a time; switching frames evicts the old cache entry.
+fn ensure_preview_texture(
+    ctx: &egui::Context,
+    state: &mut GifTimelineState,
+    path: &PathBuf,
+) -> Option<TextureHandle> {
+    if let Some((cached_path, tex)) = &state.preview_tex {
+        if cached_path == path {
+            return Some(tex.clone());
+        }
+    }
+    let img = crate::io::load::load_image(path).ok()?;
+    let max = PREVIEW_MAX_DIM;
+    let (tw, th) = if img.width() <= max && img.height() <= max {
+        (img.width(), img.height())
+    } else if img.width() >= img.height() {
+        (
+            max,
+            (max as f32 * img.height() as f32 / img.width() as f32) as u32,
+        )
+    } else {
+        (
+            (max as f32 * img.width() as f32 / img.height() as f32) as u32,
+            max,
+        )
+    };
+    let large = crate::ops::resize::resize_rgba(
+        &img,
+        tw.max(1),
+        th.max(1),
+        crate::ops::resize::Filter::Lanczos3,
+    )
+    .ok()?;
+    let size = [large.width() as usize, large.height() as usize];
+    let pixels: Vec<Color32> = large
+        .pixels()
+        .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
+        .collect();
+    let tex = ctx.load_texture(
+        format!("gif-preview:{}", path.display()),
+        ColorImage {
+            size,
+            source_size: egui::vec2(size[0] as f32, size[1] as f32),
+            pixels,
+        },
+        TextureOptions::LINEAR,
+    );
+    state.preview_tex = Some((path.clone(), tex.clone()));
+    Some(tex)
 }

@@ -297,9 +297,39 @@ impl YImageApp {
     pub fn close_tab(&mut self, index: usize) {
         if index < self.tabs.len() {
             self.tabs.remove(index);
+            // If we closed a tab before the active one, shift the index down.
+            if self.active_tab > index && self.active_tab > 0 {
+                self.active_tab -= 1;
+            }
+            // Clamp in case the active tab was the last one.
             if self.active_tab >= self.tabs.len() && !self.tabs.is_empty() {
                 self.active_tab = self.tabs.len() - 1;
             }
+        }
+    }
+
+    /// Save the current document to its known path. If no path exists, fall
+    /// back to the "Save As" dialog.
+    pub fn save_current(&mut self) {
+        let idx = self.active_tab;
+        let Some(tab) = self.tabs.get(idx) else {
+            return;
+        };
+        let Some(path) = tab.doc.path.clone() else {
+            self.dialog.save_dialog_open = true;
+            return;
+        };
+        let image = tab.doc.image.clone();
+        let tx = self.tx.clone();
+        rayon::spawn(move || {
+            if let Err(e) = crate::io::save::save_image(&image, &path) {
+                let _ = tx.send(BgMsg::Error(format!("{e:#}")));
+            } else {
+                let _ = tx.send(BgMsg::ImageSaved(path));
+            }
+        });
+        if let Some(tab) = self.tabs.get_mut(idx) {
+            tab.doc.dirty = false;
         }
     }
 
@@ -642,12 +672,10 @@ impl YImageApp {
                     new_tab,
                 } => {
                     if path.as_os_str().is_empty() {
-                        // AI operation result — update current tab in-place.
+                        // AI operation result — update in-place with undo support.
                         if let Some(tab) = self.tabs.get_mut(self.active_tab) {
-                            let keep_path = tab.doc.path.clone();
-                            tab.doc = Document::from_rgba(image, keep_path);
+                            tab.doc.replace(image);
                             tab.texture_dirty = true;
-                            tab.viewer.reset_view = true;
                         }
                     } else if new_tab || self.tabs.is_empty() {
                         let doc = Document::from_rgba(image, Some(path.clone()));
@@ -750,6 +778,10 @@ impl eframe::App for YImageApp {
         // render last so they land on top of every other panel.
         #[cfg(all(windows, feature = "capture"))]
         ui::capture_overlay::show(&ctx, self);
+
+        // GIF builder — real OS-level window via show_viewport_immediate.
+        // Must be called after all main-window panels are set up.
+        ui::gif_timeline::show_viewport(&ctx, self);
     }
 }
 

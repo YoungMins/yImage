@@ -180,7 +180,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     }
                 }
             }
-            if i.modifiers.ctrl && i.key_pressed(egui::Key::S) {
+            if i.modifiers.ctrl && !i.modifiers.shift && i.key_pressed(egui::Key::S) {
+                app.save_current();
+            }
+            if i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::S) {
                 app.dialog.save_dialog_open = true;
             }
             if i.modifiers.ctrl && i.key_pressed(egui::Key::W) {

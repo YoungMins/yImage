@@ -100,7 +100,6 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
     if app.dialog.hotkeys_open {
         hotkeys_dialog(ctx, app);
     }
-    crate::ui::gif_timeline::show(ctx, app);
 }
 
 fn resize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
