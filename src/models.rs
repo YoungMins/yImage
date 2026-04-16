@@ -105,9 +105,9 @@ impl DownloadManager {
 
 /// Stream a model file from `url` into `dest`, updating `state` as bytes arrive.
 ///
-/// Uses the Windows HTTP stack via WinHTTP (no new dependency) on Windows, and
-/// falls back to a minimal stub elsewhere. Returns Err with a human-readable
-/// message on failure.
+/// Uses `curl` (ships with Windows 10 1803+, macOS, and most Linux distros) as
+/// the HTTP client. On Windows a PowerShell fallback is available when curl is
+/// missing. No extra Rust dependency is needed.
 pub fn download_blocking(
     url: &str,
     dest: &std::path::Path,
@@ -117,76 +117,88 @@ pub fn download_blocking(
         std::fs::create_dir_all(parent)?;
     }
 
+    let dest_tmp = dest.with_extension("part");
+
+    // Try curl first — available on macOS, most Linux, and Windows 10+.
+    if let Ok(curl) = which_curl() {
+        let result = download_via_curl(&curl, url, &dest_tmp, dest, &state);
+        if result.is_ok() {
+            return result;
+        }
+        // On Windows, fall through to PowerShell if curl failed.
+        #[cfg(not(windows))]
+        return result;
+    }
+
+    // PowerShell fallback (Windows only).
     #[cfg(windows)]
     {
-        http_download_windows(url, dest, state)
+        download_via_powershell(url, &dest_tmp, dest, &state)
     }
     #[cfg(not(windows))]
     {
-        let _ = (url, dest, state);
-        anyhow::bail!("model downloader is only implemented on Windows")
+        anyhow::bail!(
+            "curl not found. Install curl and try again.\n\
+             macOS: curl is pre-installed.\n\
+             Linux: sudo apt install curl  (or equivalent)"
+        )
     }
 }
 
-#[cfg(windows)]
-fn http_download_windows(
+/// Download a file using the `curl` command-line tool.
+fn download_via_curl(
+    curl: &std::path::Path,
     url: &str,
-    dest: &std::path::Path,
-    state: Arc<Mutex<DownloadState>>,
+    dest_tmp: &std::path::Path,
+    dest_final: &std::path::Path,
+    state: &Arc<Mutex<DownloadState>>,
 ) -> anyhow::Result<()> {
-    use std::io::Write;
+    let mut child = std::process::Command::new(curl)
+        .arg("-L")
+        .arg("--fail")
+        .arg("--silent")
+        .arg("--show-error")
+        .arg("--output")
+        .arg(dest_tmp)
+        .arg(url)
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
 
-    // Use PowerShell's Invoke-WebRequest as a robust, already-installed HTTP
-    // client. We spawn it synchronously, read the file back, and poll size
-    // periodically to update the progress bar. Not the fastest path, but
-    // avoids pulling in reqwest/ureq for a one-shot download.
-    //
-    // For incremental progress we use `curl.exe` when available (Windows 10
-    // 1803+ ships it) and fall back to PowerShell otherwise.
-
-    let dest_tmp = dest.with_extension("part");
-    // Try curl first for streaming progress.
-    if let Ok(curl) = which_curl() {
-        let mut child = std::process::Command::new(curl)
-            .arg("-L")
-            .arg("--fail")
-            .arg("--silent")
-            .arg("--show-error")
-            .arg("--output")
-            .arg(&dest_tmp)
-            .arg(url)
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
-
-        // Poll file size while curl runs to update progress.
-        let poll_path = dest_tmp.clone();
-        let poll_state = state.clone();
-        let poll_thread = std::thread::spawn(move || {
-            // We don't know Content-Length without a HEAD; update bytes ticker.
-            loop {
-                std::thread::sleep(Duration::from_millis(250));
-                let size = std::fs::metadata(&poll_path).map(|m| m.len()).unwrap_or(0);
-                let mut s = poll_state.lock();
-                if !s.in_progress {
-                    break;
-                }
-                s.message = Some(format!("{} downloaded", format_bytes(size)));
+    // Poll file size while curl runs to update progress.
+    let poll_path = dest_tmp.to_path_buf();
+    let poll_state = state.clone();
+    let poll_thread = std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_millis(250));
+            let size = std::fs::metadata(&poll_path).map(|m| m.len()).unwrap_or(0);
+            let mut s = poll_state.lock();
+            if !s.in_progress {
+                break;
             }
-        });
-
-        let out = child.wait()?;
-        state.lock().in_progress = false;
-        let _ = poll_thread.join();
-        if !out.success() {
-            let _ = std::fs::remove_file(&dest_tmp);
-            anyhow::bail!("curl exited with status {out:?}");
+            s.message = Some(format!("{} downloaded", format_bytes(size)));
         }
-        std::fs::rename(&dest_tmp, dest)?;
-        state.lock().progress = 1.0;
-        return Ok(());
-    }
+    });
 
-    // PowerShell fallback.
+    let out = child.wait()?;
+    state.lock().in_progress = false;
+    let _ = poll_thread.join();
+    if !out.success() {
+        let _ = std::fs::remove_file(dest_tmp);
+        anyhow::bail!("curl exited with status {out:?}");
+    }
+    std::fs::rename(dest_tmp, dest_final)?;
+    state.lock().progress = 1.0;
+    Ok(())
+}
+
+/// PowerShell fallback for older Windows builds without curl.exe.
+#[cfg(windows)]
+fn download_via_powershell(
+    url: &str,
+    dest_tmp: &std::path::Path,
+    dest_final: &std::path::Path,
+    state: &Arc<Mutex<DownloadState>>,
+) -> anyhow::Result<()> {
     let ps_cmd = format!(
         "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
         url.replace('\'', "''"),
@@ -197,21 +209,26 @@ fn http_download_windows(
         .output()?;
     state.lock().in_progress = false;
     if !out.status.success() {
-        let _ = std::fs::remove_file(&dest_tmp);
+        let _ = std::fs::remove_file(dest_tmp);
         let err = String::from_utf8_lossy(&out.stderr).to_string();
         anyhow::bail!("powershell download failed: {err}");
     }
-    std::fs::rename(&dest_tmp, dest)?;
+    std::fs::rename(dest_tmp, dest_final)?;
     state.lock().progress = 1.0;
-    drop(Write::flush(&mut std::io::stdout())); // keep unused import happy on stub
     Ok(())
 }
 
-#[cfg(windows)]
+/// Locate the `curl` executable on the current platform.
 fn which_curl() -> anyhow::Result<PathBuf> {
+    #[cfg(windows)]
     let out = std::process::Command::new("where")
         .arg("curl.exe")
         .output()?;
+    #[cfg(not(windows))]
+    let out = std::process::Command::new("which")
+        .arg("curl")
+        .output()?;
+
     if !out.status.success() {
         anyhow::bail!("curl not found");
     }

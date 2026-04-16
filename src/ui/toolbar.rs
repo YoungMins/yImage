@@ -100,72 +100,76 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     #[cfg(all(windows, feature = "capture"))]
                     capture_menu(ui, app);
 
-                    ui.separator();
-                    if ui
-                        .button(format!(
-                            "\u{2B50}  {}",
-                            app.i18n.t("action-set-default", &[])
-                        ))
-                        .clicked()
+                    // Windows-only: file association + context menu registration.
+                    #[cfg(windows)]
                     {
-                        match crate::registry::register_file_associations() {
-                            Ok(_) => {
-                                let _ = app
-                                    .tx
-                                    .send(BgMsg::Info(app.i18n.t("status-default-ok", &[])));
+                        ui.separator();
+                        if ui
+                            .button(format!(
+                                "\u{2B50}  {}",
+                                app.i18n.t("action-set-default", &[])
+                            ))
+                            .clicked()
+                        {
+                            match crate::registry::register_file_associations() {
+                                Ok(_) => {
+                                    let _ = app
+                                        .tx
+                                        .send(BgMsg::Info(app.i18n.t("status-default-ok", &[])));
+                                }
+                                Err(e) => {
+                                    let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
+                                }
                             }
-                            Err(e) => {
-                                let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
-                            }
+                            ui.close_menu();
                         }
-                        ui.close_menu();
-                    }
-                    if ui
-                        .button(format!(
-                            "\u{2795}  {}",
-                            app.i18n.t("action-register-context", &[])
-                        ))
-                        .clicked()
-                    {
-                        let labels = crate::registry::ContextMenuLabels {
-                            root: app.i18n.t("ctx-root", &[]),
-                            open: app.i18n.t("ctx-open", &[]),
-                            optimize: app.i18n.t("ctx-optimize", &[]),
-                            resize: app.i18n.t("ctx-resize", &[]),
-                            convert: app.i18n.t("ctx-convert", &[]),
-                            bg_remove: app.i18n.t("ctx-bg-remove", &[]),
-                            obj_remove: app.i18n.t("ctx-obj-remove", &[]),
-                        };
-                        match crate::registry::register_context_menu(&labels) {
-                            Ok(_) => {
-                                let _ = app
-                                    .tx
-                                    .send(BgMsg::Info(app.i18n.t("status-context-ok", &[])));
+                        if ui
+                            .button(format!(
+                                "\u{2795}  {}",
+                                app.i18n.t("action-register-context", &[])
+                            ))
+                            .clicked()
+                        {
+                            let labels = crate::registry::ContextMenuLabels {
+                                root: app.i18n.t("ctx-root", &[]),
+                                open: app.i18n.t("ctx-open", &[]),
+                                optimize: app.i18n.t("ctx-optimize", &[]),
+                                resize: app.i18n.t("ctx-resize", &[]),
+                                convert: app.i18n.t("ctx-convert", &[]),
+                                bg_remove: app.i18n.t("ctx-bg-remove", &[]),
+                                obj_remove: app.i18n.t("ctx-obj-remove", &[]),
+                            };
+                            match crate::registry::register_context_menu(&labels) {
+                                Ok(_) => {
+                                    let _ = app
+                                        .tx
+                                        .send(BgMsg::Info(app.i18n.t("status-context-ok", &[])));
+                                }
+                                Err(e) => {
+                                    let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
+                                }
                             }
-                            Err(e) => {
-                                let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
-                            }
+                            ui.close_menu();
                         }
-                        ui.close_menu();
-                    }
-                    if ui
-                        .button(format!(
-                            "\u{2796}  {}",
-                            app.i18n.t("action-unregister-context", &[])
-                        ))
-                        .clicked()
-                    {
-                        match crate::registry::unregister_context_menu() {
-                            Ok(_) => {
-                                let _ = app
-                                    .tx
-                                    .send(BgMsg::Info(app.i18n.t("status-context-removed", &[])));
+                        if ui
+                            .button(format!(
+                                "\u{2796}  {}",
+                                app.i18n.t("action-unregister-context", &[])
+                            ))
+                            .clicked()
+                        {
+                            match crate::registry::unregister_context_menu() {
+                                Ok(_) => {
+                                    let _ = app.tx.send(
+                                        BgMsg::Info(app.i18n.t("status-context-removed", &[])),
+                                    );
+                                }
+                                Err(e) => {
+                                    let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
+                                }
                             }
-                            Err(e) => {
-                                let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
-                            }
+                            ui.close_menu();
                         }
-                        ui.close_menu();
                     }
                     ui.separator();
                     if ui
