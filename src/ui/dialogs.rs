@@ -167,22 +167,28 @@ fn resize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
     app.dialog.resize_open = open;
 
     if apply {
-        if let Some(doc) = app.active_doc_mut() {
-            match resize_rgba(
-                &doc.image,
-                app.dialog.resize_w,
-                app.dialog.resize_h,
-                app.dialog.resize_filter.to_filter(),
-            ) {
-                Ok(new_img) => {
-                    doc.replace(new_img);
-                    app.set_texture_dirty();
-                    app.dialog.resize_open = false;
+        // Extract dialog values before borrowing the tab mutably so the
+        // compiler sees disjoint borrows of app.dialog and app.tabs.
+        let target_w = app.dialog.resize_w;
+        let target_h = app.dialog.resize_h;
+        let filter = app.dialog.resize_filter.to_filter();
+        let idx = app.active_tab;
+        let result = app
+            .tabs
+            .get(idx)
+            .map(|tab| resize_rgba(&tab.doc.image, target_w, target_h, filter));
+        match result {
+            Some(Ok(new_img)) => {
+                if let Some(tab) = app.tabs.get_mut(idx) {
+                    tab.doc.replace(new_img);
+                    tab.texture_dirty = true;
                 }
-                Err(e) => {
-                    let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
-                }
+                app.dialog.resize_open = false;
             }
+            Some(Err(e)) => {
+                let _ = app.tx.send(BgMsg::Error(format!("{e:#}")));
+            }
+            None => {}
         }
     }
 }

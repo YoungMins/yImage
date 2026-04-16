@@ -97,8 +97,11 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
             app.tabs[idx].texture_dirty = false;
         }
 
-        let Some(tex) = app.tabs[idx].texture.as_ref() else {
-            return;
+        // Extract the TextureId (Copy) immediately so the immutable borrow
+        // of app.tabs is released before any mutable viewer-state operations.
+        let tex_id = match app.tabs[idx].texture.as_ref() {
+            Some(tex) => tex.id(),
+            None => return,
         };
 
         let avail = ui.available_rect_before_wrap();
@@ -145,7 +148,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         });
 
         // Draw the image texture.
-        egui::Image::new((tex.id(), display_size))
+        egui::Image::new((tex_id, display_size))
             .fit_to_exact_size(display_size)
             .paint_at(ui, rect);
 

@@ -67,9 +67,9 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         .clicked()
                     {
                         app.dialog.resize_open = true;
-                        if let Some(doc) = app.active_doc() {
-                            app.dialog.resize_w = doc.width();
-                            app.dialog.resize_h = doc.height();
+                        if let Some(tab) = app.tabs.get(app.active_tab) {
+                            app.dialog.resize_w = tab.doc.width();
+                            app.dialog.resize_h = tab.doc.height();
                         }
                         ui.close_menu();
                     }

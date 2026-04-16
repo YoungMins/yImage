@@ -311,9 +311,9 @@ impl YImageApp {
             }
             StartupAction::Resize => {
                 self.dialog.resize_open = true;
-                if let Some(doc) = self.active_doc() {
-                    self.dialog.resize_w = doc.width();
-                    self.dialog.resize_h = doc.height();
+                if let Some(tab) = self.tabs.get(self.active_tab) {
+                    self.dialog.resize_w = tab.doc.width();
+                    self.dialog.resize_h = tab.doc.height();
                 }
             }
             StartupAction::Convert => {
