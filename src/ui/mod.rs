@@ -1,3 +1,5 @@
+#[cfg(all(windows, feature = "capture"))]
+pub mod capture_overlay;
 pub mod dialogs;
 pub mod gif_timeline;
 pub mod sidebar;

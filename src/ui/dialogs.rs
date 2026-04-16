@@ -50,6 +50,17 @@ pub struct DialogState {
     // Fixed-region capture rectangle (in screen coordinates).
     pub fixed_region: Option<(i32, i32, u32, u32)>,
 
+    // Region-selection overlay shown after a Region / FixedRegion capture.
+    // Holds the full-screen screenshot and the user's drag-rectangle state
+    // until they confirm (crop+open) or cancel.
+    #[cfg(all(windows, feature = "capture"))]
+    pub region_crop: Option<crate::ui::capture_overlay::RegionCropState>,
+
+    // Countdown before firing an ActiveWindow / AutoScroll capture so the
+    // user has time to click on the target window.
+    #[cfg(all(windows, feature = "capture"))]
+    pub capture_countdown: Option<crate::ui::capture_overlay::CaptureCountdown>,
+
     // Hotkeys dialog
     pub hotkeys_open: bool,
 }

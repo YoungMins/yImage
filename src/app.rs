@@ -31,6 +31,14 @@ pub enum BgMsg {
     Progress(String, f32),
     Error(String),
     Info(String),
+    /// A full-screen screenshot was captured and should be handed to the
+    /// region-crop overlay (for `Region` / `FixedRegion` capture modes)
+    /// instead of loaded as a document directly.
+    #[cfg(all(windows, feature = "capture"))]
+    CaptureScreenshot {
+        image: image::RgbaImage,
+        mode: crate::capture::CaptureMode,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -394,8 +402,59 @@ impl YImageApp {
         self.open_path(&path);
     }
 
+    /// High-level menu/hotkey entry point for all capture modes.
+    ///
+    /// Routes each mode to the right UX:
+    ///
+    ///   * `Fullscreen` — capture immediately, open as a new document.
+    ///   * `ActiveWindow` / `AutoScroll` — start a countdown so the user
+    ///     has time to bring the target window to the foreground. The
+    ///     actual capture fires from the countdown tick in
+    ///     `ui::capture_overlay`.
+    ///   * `Region` — capture a fullscreen screenshot in the background
+    ///     and, when it arrives on the UI thread, open the region-crop
+    ///     overlay so the user can drag the final rectangle.
+    ///   * `FixedRegion` — same overlay flow, except the selection is
+    ///     saved to `dialog.fixed_region` for reuse. If we already have
+    ///     a saved region from a previous session we skip the overlay.
     #[cfg(all(windows, feature = "capture"))]
     pub fn trigger_capture(&mut self, mode: crate::capture::CaptureMode) {
+        use crate::capture::CaptureMode;
+        match mode {
+            CaptureMode::Fullscreen => {
+                self.spawn_capture_immediate(mode);
+            }
+            CaptureMode::ActiveWindow | CaptureMode::AutoScroll => {
+                self.dialog.capture_countdown =
+                    Some(crate::ui::capture_overlay::CaptureCountdown::new(mode, 3));
+            }
+            CaptureMode::Region => {
+                self.spawn_capture_screenshot_for_crop(mode);
+            }
+            CaptureMode::FixedRegion { .. } => {
+                // FixedRegion menu entry: if we have a saved rectangle,
+                // capture it straight away. Otherwise open the overlay
+                // so the user can draw one.
+                if let Some((x, y, w, h)) = self.dialog.fixed_region {
+                    self.spawn_capture_immediate(CaptureMode::FixedRegion { x, y, w, h });
+                } else {
+                    self.spawn_capture_screenshot_for_crop(CaptureMode::FixedRegion {
+                        x: 0,
+                        y: 0,
+                        w: 0,
+                        h: 0,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Background-thread capture that feeds the result straight into the
+    /// document pipeline. Used by modes that don't need the region-crop
+    /// overlay (Fullscreen / pre-saved FixedRegion / post-countdown
+    /// ActiveWindow / AutoScroll).
+    #[cfg(all(windows, feature = "capture"))]
+    pub fn spawn_capture_immediate(&mut self, mode: crate::capture::CaptureMode) {
         use crate::capture::CaptureMode;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -421,6 +480,22 @@ impl YImageApp {
                 Err(e) => {
                     let _ = tx.send(BgMsg::Error(format!("capture: {e:#}")));
                 }
+            }
+        });
+    }
+
+    /// Capture a fullscreen screenshot in the background and, when it
+    /// completes, post a `CaptureScreenshot` message so the UI thread can
+    /// open the region-crop overlay.
+    #[cfg(all(windows, feature = "capture"))]
+    fn spawn_capture_screenshot_for_crop(&mut self, mode: crate::capture::CaptureMode) {
+        let tx = self.tx.clone();
+        std::thread::spawn(move || match crate::capture::capture_primary_screen() {
+            Ok(img) => {
+                let _ = tx.send(BgMsg::CaptureScreenshot { image: img, mode });
+            }
+            Err(e) => {
+                let _ = tx.send(BgMsg::Error(format!("capture: {e:#}")));
             }
         });
     }
@@ -469,6 +544,12 @@ impl YImageApp {
                 }
                 BgMsg::Info(i) => {
                     self.status = i;
+                }
+                #[cfg(all(windows, feature = "capture"))]
+                BgMsg::CaptureScreenshot { image, mode } => {
+                    self.dialog.region_crop =
+                        Some(crate::ui::capture_overlay::RegionCropState::new(image, mode));
+                    ctx.request_repaint();
                 }
             }
         }
@@ -520,6 +601,11 @@ impl eframe::App for YImageApp {
         ui::sidebar::show(&ctx, self);
         ui::viewer::show(&ctx, self);
         ui::dialogs::show(&ctx, self);
+
+        // Capture overlays (countdown banner + region-crop selector)
+        // render last so they land on top of every other panel.
+        #[cfg(all(windows, feature = "capture"))]
+        ui::capture_overlay::show(&ctx, self);
     }
 }
 
@@ -534,7 +620,7 @@ fn is_supported_image(p: &Path) -> bool {
 }
 
 #[cfg(all(windows, feature = "capture"))]
-fn unix_millis() -> u128 {
+pub(crate) fn unix_millis() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

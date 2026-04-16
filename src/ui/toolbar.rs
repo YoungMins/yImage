@@ -11,7 +11,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         .show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button(app.i18n.t("menu-file", &[]), |ui| {
-                    if ui.button(app.i18n.t("action-open", &[])).clicked() {
+                    if ui
+                        .button(format!("\u{1F4C2}  {}", app.i18n.t("action-open", &[])))
+                        .clicked()
+                    {
                         if let Some(p) = rfd::FileDialog::new()
                             .add_filter(
                                 "images",
@@ -29,7 +32,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     if ui
                         .add_enabled(
                             app.doc.is_some(),
-                            egui::Button::new(app.i18n.t("action-save-as", &[])),
+                            egui::Button::new(format!(
+                                "\u{1F4BE}  {}",
+                                app.i18n.t("action-save-as", &[])
+                            )),
                         )
                         .clicked()
                     {
@@ -40,7 +46,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     if ui
                         .add_enabled(
                             app.doc.is_some(),
-                            egui::Button::new(app.i18n.t("action-optimize", &[])),
+                            egui::Button::new(format!(
+                                "\u{26A1}  {}",
+                                app.i18n.t("action-optimize", &[])
+                            )),
                         )
                         .clicked()
                     {
@@ -50,7 +59,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     if ui
                         .add_enabled(
                             app.doc.is_some(),
-                            egui::Button::new(app.i18n.t("action-resize", &[])),
+                            egui::Button::new(format!(
+                                "\u{2194}  {}",
+                                app.i18n.t("action-resize", &[])
+                            )),
                         )
                         .clicked()
                     {
@@ -64,7 +76,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     if ui
                         .add_enabled(
                             app.doc.is_some(),
-                            egui::Button::new(app.i18n.t("action-convert", &[])),
+                            egui::Button::new(format!(
+                                "\u{21C4}  {}",
+                                app.i18n.t("action-convert", &[])
+                            )),
                         )
                         .clicked()
                     {
@@ -72,7 +87,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button(app.i18n.t("action-gif", &[])).clicked() {
+                    if ui
+                        .button(format!("\u{1F39E}  {}", app.i18n.t("action-gif", &[])))
+                        .clicked()
+                    {
                         app.tool = ToolKind::Gif;
                         app.dialog.gif_timeline_open = true;
                         ui.close_menu();
@@ -83,7 +101,13 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     capture_menu(ui, app);
 
                     ui.separator();
-                    if ui.button(app.i18n.t("action-set-default", &[])).clicked() {
+                    if ui
+                        .button(format!(
+                            "\u{2B50}  {}",
+                            app.i18n.t("action-set-default", &[])
+                        ))
+                        .clicked()
+                    {
                         match crate::registry::register_file_associations() {
                             Ok(_) => {
                                 let _ = app
@@ -97,7 +121,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         ui.close_menu();
                     }
                     if ui
-                        .button(app.i18n.t("action-register-context", &[]))
+                        .button(format!(
+                            "\u{2795}  {}",
+                            app.i18n.t("action-register-context", &[])
+                        ))
                         .clicked()
                     {
                         let labels = crate::registry::ContextMenuLabels {
@@ -122,7 +149,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         ui.close_menu();
                     }
                     if ui
-                        .button(app.i18n.t("action-unregister-context", &[]))
+                        .button(format!(
+                            "\u{2796}  {}",
+                            app.i18n.t("action-unregister-context", &[])
+                        ))
                         .clicked()
                     {
                         match crate::registry::unregister_context_menu() {
@@ -138,13 +168,19 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button(app.i18n.t("action-quit", &[])).clicked() {
+                    if ui
+                        .button(format!("\u{23FB}  {}", app.i18n.t("action-quit", &[])))
+                        .clicked()
+                    {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
 
                 ui.menu_button(app.i18n.t("menu-edit", &[]), |ui| {
-                    if ui.button(app.i18n.t("action-undo", &[])).clicked() {
+                    if ui
+                        .button(format!("\u{21B6}  {}", app.i18n.t("action-undo", &[])))
+                        .clicked()
+                    {
                         if let Some(doc) = app.doc.as_mut() {
                             if doc.undo() {
                                 app.texture_dirty = true;
@@ -152,7 +188,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                         }
                         ui.close_menu();
                     }
-                    if ui.button(app.i18n.t("action-redo", &[])).clicked() {
+                    if ui
+                        .button(format!("\u{21B7}  {}", app.i18n.t("action-redo", &[])))
+                        .clicked()
+                    {
                         if let Some(doc) = app.doc.as_mut() {
                             if doc.redo() {
                                 app.texture_dirty = true;
@@ -163,18 +202,30 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                 });
 
                 ui.menu_button(app.i18n.t("menu-view", &[]), |ui| {
-                    if ui.button(app.i18n.t("action-fit", &[])).clicked() {
+                    if ui
+                        .button(format!("\u{26F6}  {}", app.i18n.t("action-fit", &[])))
+                        .clicked()
+                    {
                         app.viewer.reset_view = true;
                         ui.close_menu();
                     }
-                    if ui.button(app.i18n.t("action-zoom-100", &[])).clicked() {
+                    if ui
+                        .button(format!(
+                            "\u{1F50D}  {}",
+                            app.i18n.t("action-zoom-100", &[])
+                        ))
+                        .clicked()
+                    {
                         app.viewer.zoom = 1.0;
                         ui.close_menu();
                     }
                     ui.separator();
                     let mut show_thumbs = app.thumbs.visible;
                     if ui
-                        .checkbox(&mut show_thumbs, app.i18n.t("view-thumbnails", &[]))
+                        .checkbox(
+                            &mut show_thumbs,
+                            format!("\u{2630}  {}", app.i18n.t("view-thumbnails", &[])),
+                        )
                         .changed()
                     {
                         app.thumbs.visible = show_thumbs;
@@ -182,7 +233,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     ui.separator();
                     let mut dark = app.settings.theme_dark;
                     if ui
-                        .checkbox(&mut dark, app.i18n.t("view-dark-theme", &[]))
+                        .checkbox(
+                            &mut dark,
+                            format!("\u{1F319}  {}", app.i18n.t("view-dark-theme", &[])),
+                        )
                         .changed()
                     {
                         app.settings.theme_dark = dark;
@@ -195,7 +249,10 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     #[cfg(all(windows, feature = "capture"))]
                     {
                         ui.separator();
-                        if ui.button(app.i18n.t("menu-hotkeys", &[])).clicked() {
+                        if ui
+                            .button(format!("\u{2328}  {}", app.i18n.t("menu-hotkeys", &[])))
+                            .clicked()
+                        {
                             app.dialog.hotkeys_open = true;
                             ui.close_menu();
                         }
@@ -221,20 +278,33 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
 
 #[cfg(all(windows, feature = "capture"))]
 fn capture_menu(ui: &mut egui::Ui, app: &mut YImageApp) {
-    ui.menu_button(app.i18n.t("action-capture", &[]), |ui| {
-        if ui.button(app.i18n.t("cap-fullscreen", &[])).clicked() {
+    let title = format!("\u{1F4F7}  {}", app.i18n.t("action-capture", &[]));
+    ui.menu_button(title, |ui| {
+        if ui
+            .button(format!("\u{25A3}  {}", app.i18n.t("cap-fullscreen", &[])))
+            .clicked()
+        {
             app.trigger_capture(crate::capture::CaptureMode::Fullscreen);
             ui.close_menu();
         }
-        if ui.button(app.i18n.t("cap-window", &[])).clicked() {
+        if ui
+            .button(format!("\u{25F1}  {}", app.i18n.t("cap-window", &[])))
+            .clicked()
+        {
             app.trigger_capture(crate::capture::CaptureMode::ActiveWindow);
             ui.close_menu();
         }
-        if ui.button(app.i18n.t("cap-region", &[])).clicked() {
+        if ui
+            .button(format!("\u{25F0}  {}", app.i18n.t("cap-region", &[])))
+            .clicked()
+        {
             app.trigger_capture(crate::capture::CaptureMode::Region);
             ui.close_menu();
         }
-        if ui.button(app.i18n.t("cap-fixed", &[])).clicked() {
+        if ui
+            .button(format!("\u{25F3}  {}", app.i18n.t("cap-fixed", &[])))
+            .clicked()
+        {
             let mode = match app.dialog.fixed_region {
                 Some((x, y, w, h)) => crate::capture::CaptureMode::FixedRegion { x, y, w, h },
                 None => crate::capture::CaptureMode::FixedRegion {
@@ -247,12 +317,18 @@ fn capture_menu(ui: &mut egui::Ui, app: &mut YImageApp) {
             app.trigger_capture(mode);
             ui.close_menu();
         }
-        if ui.button(app.i18n.t("cap-scroll", &[])).clicked() {
+        if ui
+            .button(format!("\u{21C5}  {}", app.i18n.t("cap-scroll", &[])))
+            .clicked()
+        {
             app.trigger_capture(crate::capture::CaptureMode::AutoScroll);
             ui.close_menu();
         }
         ui.separator();
-        if ui.button(app.i18n.t("menu-hotkeys", &[])).clicked() {
+        if ui
+            .button(format!("\u{2328}  {}", app.i18n.t("menu-hotkeys", &[])))
+            .clicked()
+        {
             app.dialog.hotkeys_open = true;
             ui.close_menu();
         }
