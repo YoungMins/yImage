@@ -159,7 +159,8 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                 });
 
             if let Some(p) = nav_target {
-                app.open_path(&p, false);
+                let is_dirty = app.tabs.get(app.active_tab).map_or(false, |t| t.doc.dirty);
+                app.open_path(&p, is_dirty);
             }
         });
 }

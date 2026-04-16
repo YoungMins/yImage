@@ -77,6 +77,9 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                 }
 
                 if let Some(idx) = switch_to {
+                    if idx != app.active_tab {
+                        app.dialog.obj_mask = None;
+                    }
                     app.active_tab = idx;
                 }
                 if let Some(idx) = close_idx {

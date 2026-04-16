@@ -169,20 +169,25 @@ pub fn capture_auto_scroll(max_iterations: usize, delay_ms: u64) -> Result<RgbaI
 
     let first = capture_active_window()?;
     let mut stitched = first.clone();
+    let mut prev = first;
 
     for _ in 0..max_iterations {
         send_pgdn();
         sleep(Duration::from_millis(delay_ms));
         let next = capture_active_window()?;
-        if next.dimensions() != first.dimensions() {
+        if next.dimensions() != prev.dimensions() {
             break;
         }
-        let overlap = find_vertical_overlap(&stitched, &next);
-        if overlap >= next.height() {
-            // Content didn't advance (end of scrollable region).
+        // Detect the static header (address bar, toolbar, etc.) that
+        // appears identically at the top of consecutive captures.
+        let header = find_static_header(&prev, &next);
+        let overlap = find_vertical_overlap_skip(&stitched, &next, header);
+        let content_h = next.height().saturating_sub(header);
+        if overlap >= content_h {
             break;
         }
-        append_below(&mut stitched, &next, overlap);
+        append_below_skip(&mut stitched, &next, overlap, header);
+        prev = next;
     }
 
     Ok(stitched)
@@ -223,37 +228,50 @@ fn send_pgdn() {
     }
 }
 
-/// Return how many rows at the top of `next` already exist at the bottom of
-/// `stitched`. Uses a coarse per-row hash (sum of channel bytes) which is
-/// good enough for screenshot content where adjacent scroll frames overlap
-/// on byte-identical rows.
-fn find_vertical_overlap(stitched: &RgbaImage, next: &RgbaImage) -> u32 {
+fn hash_row(img: &RgbaImage, y: u32, max_w: usize) -> u64 {
+    let row = img
+        .as_raw()
+        .chunks_exact(img.width() as usize * 4)
+        .nth(y as usize)
+        .unwrap_or(&[]);
+    let mut h: u64 = 1469598103934665603;
+    for &b in row.iter().take(max_w * 4) {
+        h = h.wrapping_mul(1099511628211);
+        h ^= b as u64;
+    }
+    h
+}
+
+/// Detect how many rows at the top of two consecutive captures are identical
+/// (static header: title bar, address bar, toolbar, etc.). Stops at the first
+/// row that differs and caps at one-third of the image height.
+fn find_static_header(a: &RgbaImage, b: &RgbaImage) -> u32 {
+    let w = a.width().min(b.width()) as usize;
+    let max_check = (a.height().min(b.height()) / 3) as usize;
+    let mut header = 0u32;
+    for y in 0..max_check {
+        if hash_row(a, y as u32, w) == hash_row(b, y as u32, w) {
+            header = y as u32 + 1;
+        } else {
+            break;
+        }
+    }
+    header
+}
+
+/// Like `find_vertical_overlap` but skips the first `skip_top` rows of `next`
+/// (the static header) when searching for overlap with the bottom of `stitched`.
+fn find_vertical_overlap_skip(stitched: &RgbaImage, next: &RgbaImage, skip_top: u32) -> u32 {
     let w = stitched.width().min(next.width()) as usize;
     let sh = stitched.height() as usize;
-    let nh = next.height() as usize;
-    let max_try = sh.min(nh);
+    let content_h = next.height().saturating_sub(skip_top) as usize;
+    let max_try = sh.min(content_h);
 
-    // Pre-hash rows.
-    let hash_row = |img: &RgbaImage, y: u32| -> u64 {
-        let row = img
-            .as_raw()
-            .chunks_exact(img.width() as usize * 4)
-            .nth(y as usize)
-            .unwrap_or(&[]);
-        let mut h: u64 = 1469598103934665603;
-        for &b in row.iter().take(w * 4) {
-            h = h.wrapping_mul(1099511628211);
-            h ^= b as u64;
-        }
-        h
-    };
-
-    // Try decreasing overlap sizes; return the first match.
     for overlap in (1..=max_try).rev() {
         let mut matched = true;
         for i in 0..overlap {
-            let s = hash_row(stitched, (sh - overlap + i) as u32);
-            let n = hash_row(next, i as u32);
+            let s = hash_row(stitched, (sh - overlap + i) as u32, w);
+            let n = hash_row(next, skip_top + i as u32, w);
             if s != n {
                 matched = false;
                 break;
@@ -266,13 +284,19 @@ fn find_vertical_overlap(stitched: &RgbaImage, next: &RgbaImage) -> u32 {
     0
 }
 
-fn append_below(stitched: &mut RgbaImage, next: &RgbaImage, overlap: u32) {
+/// Append the non-overlapping, non-header portion of `next` below `stitched`.
+fn append_below_skip(stitched: &mut RgbaImage, next: &RgbaImage, overlap: u32, skip_top: u32) {
     let w = stitched.width().max(next.width());
-    let extra = next.height().saturating_sub(overlap);
+    let content_h = next.height().saturating_sub(skip_top);
+    let extra = content_h.saturating_sub(overlap);
+    if extra == 0 {
+        return;
+    }
     let new_h = stitched.height() + extra;
     let mut out = RgbaImage::new(w, new_h);
     let _ = out.copy_from(stitched, 0, 0);
-    let tail = image::imageops::crop_imm(next, 0, overlap, next.width(), extra);
+    let src_y = skip_top + overlap;
+    let tail = image::imageops::crop_imm(next, 0, src_y, next.width(), extra);
     let _ = out.copy_from(&*tail, 0, stitched.height());
     *stitched = out;
 }

@@ -67,6 +67,7 @@ prop-path = パス
 welcome-open = 画像を開くか、ウィンドウにドロップしてください。
 status-loaded = 読み込み完了: { $path }
 status-saved = 保存しました: { $path }
+status-capturing = キャプチャ中...
 status-default-ok = yImage を既定の画像ビューアーに登録しました。
 
 brush-size = ブラシサイズ

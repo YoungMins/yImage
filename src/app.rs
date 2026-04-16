@@ -291,6 +291,7 @@ impl YImageApp {
         self.next_tab_id += 1;
         self.tabs.push(Tab::new(id, doc));
         self.active_tab = self.tabs.len() - 1;
+        self.dialog.obj_mask = None;
     }
 
     pub fn close_tab(&mut self, index: usize) {
@@ -478,7 +479,8 @@ impl YImageApp {
         let next = ((current as isize + delta).rem_euclid(len)) as usize;
         self.folder_index = next;
         let path = entries[next].clone();
-        self.open_path(&path, false);
+        let is_dirty = self.tabs.get(self.active_tab).map_or(false, |t| t.doc.dirty);
+        self.open_path(&path, is_dirty);
     }
 
     /// High-level menu/hotkey entry point for all capture modes.
@@ -539,6 +541,8 @@ impl YImageApp {
     #[cfg(all(windows, feature = "capture"))]
     pub fn spawn_capture_immediate(&mut self, mode: crate::capture::CaptureMode) {
         use crate::capture::CaptureMode;
+        self.status = self.i18n.t("status-capturing", &[]);
+        self.progress = Some((self.i18n.t("status-capturing", &[]), 0.0));
         let tx = self.tx.clone();
 
         // Grab our window handle while on the UI thread so we can

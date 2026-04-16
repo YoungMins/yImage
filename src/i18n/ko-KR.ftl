@@ -67,6 +67,7 @@ prop-path = 경로
 welcome-open = 이미지를 열거나 창에 끌어다 놓으세요.
 status-loaded = 불러옴: { $path }
 status-saved = 저장됨: { $path }
+status-capturing = 캡처 중...
 status-default-ok = yImage를 기본 이미지 뷰어로 등록했습니다.
 
 brush-size = 브러시 크기

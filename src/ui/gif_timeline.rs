@@ -1,16 +1,13 @@
-// GIF builder — dedicated tool with a step-by-step timeline UI.
+// GIF builder — two-column layout with drag-to-reorder timeline.
 //
-// Instead of a single dense dialog, the builder is laid out top-to-bottom
-// as a guided flow: 1) Add frames, 2) Timeline, 3) Playback settings,
-// 4) Preview & export. The empty-state shows a large "Add frames…" CTA
-// so brand-new users have an obvious first action. Once frames exist,
-// the preview at the bottom automatically animates so the user can see
-// what the GIF will look like before exporting.
+// Left column:  1) Add frames, 2) Timeline with drag reorder, 3) Playback settings
+// Right column: 4) Preview & export — fills available height for a larger preview.
+// The window is unconstrained so it can be dragged beyond the app bounds.
 
 use std::path::PathBuf;
 use std::time::Instant;
 
-use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions, Vec2};
+use egui::{Color32, ColorImage, Rect, RichText, Sense, TextureHandle, TextureOptions, Vec2};
 
 use crate::app::{BgMsg, YImageApp};
 use crate::ui::thumbnails::THUMB_MAX_DIM;
@@ -20,14 +17,11 @@ pub struct GifTimelineState {
     pub delay_ms: u16,
     pub loop_infinite: bool,
     pub selected: Option<usize>,
-    /// Whether the preview at the bottom is currently auto-playing.
     pub playing: bool,
-    /// When playback started — used to derive which frame to show right
-    /// now. `None` when not playing.
     pub play_started: Option<Instant>,
-    /// Open flag so this also works as a dockable workspace. Closing the
-    /// workspace keeps the frames around so reopening is zero-click.
     pub open: bool,
+    /// Index of the frame currently being dragged (for reorder).
+    pub drag_from: Option<usize>,
 }
 
 impl Default for GifTimelineState {
@@ -40,6 +34,7 @@ impl Default for GifTimelineState {
             playing: false,
             play_started: None,
             open: false,
+            drag_from: None,
         }
     }
 }
@@ -55,9 +50,6 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         return;
     }
 
-    // If playback is active, request a repaint on the next tick so the
-    // preview animates smoothly even when nothing else is driving UI
-    // updates.
     if app.dialog.gif.playing {
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
@@ -67,18 +59,28 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         RichText::new(format!("\u{1F39E}  {}", app.i18n.t("gif-builder-title", &[]))).size(15.0),
     )
     .open(&mut open)
-    .default_size([900.0, 620.0])
-    .min_width(640.0)
+    .default_size([1000.0, 620.0])
+    .min_width(700.0)
     .min_height(520.0)
     .resizable(true)
     .collapsible(true)
+    .constrain(false)
     .show(ctx, |ui| {
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                if app.dialog.gif.frames.is_empty() {
-                    empty_state(ui, app);
-                } else {
+        if app.dialog.gif.frames.is_empty() {
+            empty_state(ui, app);
+        } else {
+            egui::SidePanel::right("gif-preview-panel")
+                .default_width(320.0)
+                .min_width(240.0)
+                .max_width(500.0)
+                .resizable(true)
+                .show_inside(ui, |ui| {
+                    step4_preview_export(ctx, ui, app);
+                });
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
                     step1_add_frames(ui, app);
                     ui.add_space(12.0);
                     ui.separator();
@@ -89,19 +91,12 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     ui.add_space(8.0);
                     step3_playback(ui, app);
                     ui.add_space(12.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-                    step4_preview_export(ctx, ui, app);
-                    ui.add_space(12.0);
-                }
-            });
+                });
+        }
     });
     app.dialog.gif_timeline_open = open;
 }
 
-/// Big centred call-to-action when no frames have been added yet. This
-/// replaces the original "silent empty timeline" that left users unsure
-/// what to do next.
 fn empty_state(ui: &mut egui::Ui, app: &mut YImageApp) {
     ui.add_space(40.0);
     ui.vertical_centered(|ui| {
@@ -141,7 +136,6 @@ fn empty_state(ui: &mut egui::Ui, app: &mut YImageApp) {
     });
 }
 
-/// Section 1: frame picker + numeric summary.
 fn step1_add_frames(ui: &mut egui::Ui, app: &mut YImageApp) {
     section_header(ui, &app.i18n.t("gif-step1", &[]));
     ui.weak(app.i18n.t("gif-step1-hint", &[]));
@@ -171,6 +165,7 @@ fn step1_add_frames(ui: &mut egui::Ui, app: &mut YImageApp) {
             app.dialog.gif.selected = None;
             app.dialog.gif.playing = false;
             app.dialog.gif.play_started = None;
+            app.dialog.gif.drag_from = None;
         }
         ui.add_space(8.0);
         ui.label(
@@ -184,8 +179,6 @@ fn step1_add_frames(ui: &mut egui::Ui, app: &mut YImageApp) {
     });
 }
 
-/// Section 2: horizontal frame strip with click-to-select, reorder, and
-/// per-frame delete.
 fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
     section_header(ui, &app.i18n.t("gif-step2", &[]));
     ui.weak(app.i18n.t("gif-step2-hint", &[]));
@@ -194,6 +187,8 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
     let mut new_sel = app.dialog.gif.selected;
     let mut move_request: Option<(usize, isize)> = None;
     let mut remove_request: Option<usize> = None;
+    let mut card_rects: Vec<Rect> = Vec::new();
+    let mut drag_started_on: Option<usize> = None;
 
     egui::ScrollArea::horizontal()
         .id_salt("gif-timeline-scroll")
@@ -203,9 +198,8 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
                 let n = app.dialog.gif.frames.len();
                 for i in 0..n {
                     let is_sel = new_sel == Some(i);
-                    // Split the borrow: ensure texture first, then draw
-                    // card. `ensure_gif_texture` needs `&ctx` + path, no
-                    // overlap with `app`.
+                    let is_dragging = app.dialog.gif.drag_from == Some(i);
+
                     let path = app.dialog.gif.frames[i].path.clone();
                     let cached = app.dialog.gif.frames[i].texture.clone();
                     let tex = cached.or_else(|| {
@@ -218,19 +212,24 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
                         t
                     });
 
+                    const THUMB: f32 = 80.0;
+                    const CARD_W: f32 = THUMB + 16.0;
+
                     let card = egui::Frame::group(ui.style())
                         .inner_margin(egui::Margin::same(4))
                         .corner_radius(egui::CornerRadius::same(6))
+                        .fill(if is_dragging {
+                            super::theme::ACCENT.linear_multiply(0.12)
+                        } else {
+                            Color32::TRANSPARENT
+                        })
                         .stroke(if is_sel {
                             egui::Stroke::new(2.0, super::theme::ACCENT)
+                        } else if is_dragging {
+                            egui::Stroke::new(2.0, super::theme::ACCENT.linear_multiply(0.6))
                         } else {
                             egui::Stroke::new(1.0, Color32::from_gray(80))
                         });
-
-                    // Fixed card width so frames don't stretch to
-                    // fill the scroll area when there are few of them.
-                    const THUMB: f32 = 80.0;
-                    const CARD_W: f32 = THUMB + 16.0; // thumb + inner margin
 
                     let resp = card
                         .show(ui, |ui| {
@@ -244,7 +243,7 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
                                     );
                                 } else {
                                     let (rect, _) =
-                                        ui.allocate_exact_size(size, egui::Sense::hover());
+                                        ui.allocate_exact_size(size, Sense::hover());
                                     ui.painter().rect_filled(
                                         rect,
                                         egui::CornerRadius::same(4),
@@ -260,7 +259,13 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
                                             Color32::from_gray(180)
                                         }),
                                 );
+                                // Center the arrow/delete buttons
                                 ui.horizontal(|ui| {
+                                    let spacing = ui.spacing().item_spacing.x;
+                                    let btn_approx_w = 22.0;
+                                    let total_btns = 3.0 * btn_approx_w + 2.0 * spacing;
+                                    let left_pad = ((CARD_W - total_btns) / 2.0).max(0.0);
+                                    ui.add_space(left_pad);
                                     if ui
                                         .small_button("\u{25C0}")
                                         .on_hover_text(app.i18n.t("gif-move-left", &[]))
@@ -286,7 +291,13 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
                             });
                         })
                         .response
-                        .interact(egui::Sense::click());
+                        .interact(Sense::click_and_drag());
+
+                    card_rects.push(resp.rect);
+
+                    if resp.drag_started() {
+                        drag_started_on = Some(i);
+                    }
                     if resp.clicked() {
                         new_sel = Some(i);
                         app.dialog.gif.playing = false;
@@ -295,6 +306,34 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
                 }
             });
         });
+
+    // Drag start
+    if let Some(i) = drag_started_on {
+        app.dialog.gif.drag_from = Some(i);
+    }
+
+    // Drag swap: when pointer hovers over a different card, swap frames
+    if let Some(from) = app.dialog.gif.drag_from {
+        if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
+            for (i, rect) in card_rects.iter().enumerate() {
+                if i != from && rect.contains(pos) {
+                    app.dialog.gif.frames.swap(from, i);
+                    if app.dialog.gif.selected == Some(from) {
+                        app.dialog.gif.selected = Some(i);
+                    } else if app.dialog.gif.selected == Some(i) {
+                        app.dialog.gif.selected = Some(from);
+                    }
+                    app.dialog.gif.drag_from = Some(i);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Drag end
+    if app.dialog.gif.drag_from.is_some() && !ctx.input(|i| i.pointer.any_down()) {
+        app.dialog.gif.drag_from = None;
+    }
 
     app.dialog.gif.selected = new_sel;
 
@@ -338,7 +377,6 @@ fn step2_timeline(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
     });
 }
 
-/// Section 3: frame delay + loop toggle.
 fn step3_playback(ui: &mut egui::Ui, app: &mut YImageApp) {
     section_header(ui, &app.i18n.t("gif-step3", &[]));
     if app.dialog.gif.delay_ms == 0 {
@@ -354,16 +392,16 @@ fn step3_playback(ui: &mut egui::Ui, app: &mut YImageApp) {
     );
 }
 
-/// Section 4: the live animated preview and the big export button.
 fn step4_preview_export(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
     section_header(ui, &app.i18n.t("gif-step4", &[]));
 
-    // Decide which frame to display right now.
     let frame_idx = current_preview_frame(&app.dialog.gif);
 
-    // Preview area.
+    // Preview fills available height minus controls at bottom
     let avail = ui.available_rect_before_wrap();
-    let preview_h = 260.0_f32.min(avail.height().max(120.0));
+    let controls_h = 90.0;
+    let preview_h = (avail.height() - controls_h).max(120.0);
+
     ui.allocate_ui_with_layout(
         Vec2::new(avail.width(), preview_h),
         egui::Layout::top_down(egui::Align::Center),
@@ -383,7 +421,7 @@ fn step4_preview_export(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImage
                 match tex {
                     Some(t) => {
                         let max_w = ui.available_width();
-                        let max_h = ui.available_height() - 36.0;
+                        let max_h = ui.available_height() - 8.0;
                         let size = t.size_vec2();
                         let scale = (max_w / size.x).min(max_h / size.y).clamp(0.05, 4.0);
                         let disp = size * scale;
@@ -391,7 +429,7 @@ fn step4_preview_export(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImage
                     }
                     None => {
                         ui.add_space(40.0);
-                        ui.weak("…");
+                        ui.weak("\u{2026}");
                     }
                 }
             } else {
@@ -403,7 +441,6 @@ fn step4_preview_export(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImage
 
     ui.add_space(6.0);
 
-    // Play / Stop controls + Export.
     ui.horizontal(|ui| {
         let play_label = if app.dialog.gif.playing {
             format!("\u{23F8}  {}", app.i18n.t("gif-pause", &[]))
@@ -413,7 +450,7 @@ fn step4_preview_export(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImage
         if ui
             .add_enabled(
                 app.dialog.gif.frames.len() >= 2,
-                egui::Button::new(play_label).min_size(Vec2::new(110.0, 30.0)),
+                egui::Button::new(play_label).min_size(Vec2::new(100.0, 28.0)),
             )
             .clicked()
         {
@@ -429,41 +466,40 @@ fn step4_preview_export(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImage
             .add_enabled(
                 app.dialog.gif.playing,
                 egui::Button::new(format!("\u{23F9}  {}", app.i18n.t("gif-stop", &[])))
-                    .min_size(Vec2::new(100.0, 30.0)),
+                    .min_size(Vec2::new(90.0, 28.0)),
             )
             .clicked()
         {
             app.dialog.gif.playing = false;
             app.dialog.gif.play_started = None;
         }
-
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .add_enabled(
-                    !app.dialog.gif.frames.is_empty(),
-                    egui::Button::new(
-                        RichText::new(format!(
-                            "  \u{1F4E4}  {}  ",
-                            app.i18n.t("gif-export", &[])
-                        ))
-                        .size(14.0)
-                        .color(Color32::WHITE),
-                    )
-                    .min_size(Vec2::new(160.0, 32.0))
-                    .fill(super::theme::ACCENT),
-                )
-                .clicked()
-            {
-                export(app);
-            }
-        });
     });
+
+    ui.add_space(6.0);
+
+    if ui
+        .add_enabled(
+            !app.dialog.gif.frames.is_empty(),
+            egui::Button::new(
+                RichText::new(format!(
+                    "  \u{1F4E4}  {}  ",
+                    app.i18n.t("gif-export", &[])
+                ))
+                .size(14.0)
+                .color(Color32::WHITE),
+            )
+            .min_size(Vec2::new(ui.available_width().min(200.0), 32.0))
+            .fill(super::theme::ACCENT),
+        )
+        .clicked()
+    {
+        export(app);
+    }
 }
 
-/// Render a `Step N. ...` header with a subtle accent bar.
 fn section_header(ui: &mut egui::Ui, text: &str) {
     ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(3.0, 18.0), egui::Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(3.0, 18.0), Sense::hover());
         ui.painter().rect_filled(
             rect,
             egui::CornerRadius::same(1),
@@ -474,8 +510,6 @@ fn section_header(ui: &mut egui::Ui, text: &str) {
     ui.add_space(2.0);
 }
 
-/// Which timeline frame should be visible in the preview right now, given
-/// the current playback state.
 fn current_preview_frame(gif: &GifTimelineState) -> Option<usize> {
     if gif.frames.is_empty() {
         return None;

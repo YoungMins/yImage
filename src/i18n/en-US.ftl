@@ -67,6 +67,7 @@ prop-path = Path
 welcome-open = Open an image to get started, or drop one into the window.
 status-loaded = Loaded { $path }
 status-saved = Saved { $path }
+status-capturing = Capturing...
 status-default-ok = yImage registered as default image viewer.
 
 brush-size = Size
