@@ -828,8 +828,15 @@ fn minimize_window(hwnd: windows::Win32::Foundation::HWND) {
 
 #[cfg(all(windows, feature = "capture"))]
 fn restore_window(hwnd: windows::Win32::Foundation::HWND) {
-    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_RESTORE};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
     unsafe {
         let _ = ShowWindow(hwnd, SW_RESTORE);
+        // Explicitly re-activate yImage so the region-crop overlay is
+        // actually visible — otherwise SW_RESTORE may leave us behind the
+        // window that gained focus while we were minimized, and the overlay
+        // would render to a hidden window.
+        let _ = SetForegroundWindow(hwnd);
     }
 }

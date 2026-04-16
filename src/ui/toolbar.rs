@@ -2,14 +2,21 @@
 // and the Ko-fi support link. Tool selection lives in the left-hand
 // tool-palette panel (toolpanel.rs) to keep this bar uncluttered.
 
-use crate::app::{BgMsg, YImageApp};
+use crate::app::YImageApp;
+#[cfg(windows)]
+use crate::app::BgMsg;
 use crate::tools::ToolKind;
 
 pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
+    // Apple-style menu bar: slightly taller, with generous horizontal padding
+    // around the menu titles so the buttons read like a macOS menu strip.
     egui::TopBottomPanel::top("toolbar")
-        .exact_height(32.0)
+        .exact_height(38.0)
         .show(ctx, |ui| {
+            ui.add_space(3.0);
             egui::menu::bar(ui, |ui| {
+                ui.spacing_mut().button_padding = egui::Vec2::new(10.0, 4.0);
+                ui.spacing_mut().item_spacing.x = 2.0;
                 ui.menu_button(app.i18n.t("menu-file", &[]), |ui| {
                     if ui
                         .button(format!("\u{1F4C2}  {}", app.i18n.t("action-open", &[])))

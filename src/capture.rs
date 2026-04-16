@@ -116,6 +116,13 @@ pub fn capture_primary_screen() -> Result<RgbaImage> {
 /// Capture the current foreground window.
 pub fn capture_active_window() -> Result<RgbaImage> {
     let window = Window::foreground().context("get foreground window")?;
+    capture_window(window)
+}
+
+/// Capture a specific window by `Window` handle. Used by auto-scroll to lock
+/// onto a single target across multiple iterations (otherwise the foreground
+/// could change mid-capture and we'd stitch frames from different windows).
+fn capture_window(window: Window) -> Result<RgbaImage> {
     let output: Arc<Mutex<Option<RgbaImage>>> = Arc::new(Mutex::new(None));
 
     let settings = Settings::new(
@@ -166,15 +173,30 @@ pub fn capture_fixed_region(x: i32, y: i32, w: u32, h: u32) -> Result<RgbaImage>
 /// are discarded and the rest is appended downward.
 pub fn capture_auto_scroll(max_iterations: usize, delay_ms: u64) -> Result<RgbaImage> {
     use std::thread::sleep;
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
-    let first = capture_active_window()?;
+    // Resolve the target window ONCE. If we re-queried `Window::foreground()`
+    // on every iteration the foreground could shift (user clicks elsewhere,
+    // focus lands on yImage, etc.) and we'd stitch frames from different
+    // windows.
+    use windows::Win32::Foundation::HWND;
+    let hwnd = unsafe { GetForegroundWindow() };
+    anyhow::ensure!(hwnd != HWND::default(), "no foreground window to auto-scroll");
+    // windows 0.56's HWND wraps an isize; windows-capture takes a raw *mut c_void.
+    let target = Window::from_raw_hwnd(hwnd.0 as *mut std::ffi::c_void);
+
+    let first = capture_window(target)?;
     let mut stitched = first.clone();
     let mut prev = first;
 
     for _ in 0..max_iterations {
+        // Make sure the target still has keyboard focus so PgDn reaches it.
+        // If another window (e.g. yImage) stole focus between iterations the
+        // PgDn would be swallowed and auto-scroll would appear frozen.
+        activate_hwnd(hwnd);
         send_pgdn();
         sleep(Duration::from_millis(delay_ms));
-        let next = capture_active_window()?;
+        let next = capture_window(target)?;
         if next.dimensions() != prev.dimensions() {
             break;
         }
@@ -191,6 +213,17 @@ pub fn capture_auto_scroll(max_iterations: usize, delay_ms: u64) -> Result<RgbaI
     }
 
     Ok(stitched)
+}
+
+/// Bring a specific window to the foreground. Best-effort: Windows requires
+/// the calling process to own the foreground OR have received input recently,
+/// so this silently no-ops when not permitted. That's fine — the next captured
+/// frame will simply show the previous focus.
+fn activate_hwnd(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+    }
 }
 
 fn send_pgdn() {
