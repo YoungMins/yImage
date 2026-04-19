@@ -101,10 +101,28 @@ pub fn inpaint(image: &RgbaImage, mask: &GrayImage) -> Result<RgbaImage> {
         input_names.len()
     );
 
+    // Match inputs by name rather than position — different LaMa ONNX exports
+    // order the graph inputs differently. Fall back to positional if names
+    // don't contain a recognisable hint.
+    let (img_key, mask_key) = {
+        let mask_idx = input_names
+            .iter()
+            .position(|n| n.to_lowercase().contains("mask"));
+        match mask_idx {
+            Some(mi) => {
+                let ii = (0..input_names.len())
+                    .find(|&i| i != mi)
+                    .unwrap_or(0);
+                (input_names[ii].clone(), input_names[mi].clone())
+            }
+            None => (input_names[0].clone(), input_names[1].clone()),
+        }
+    };
+
     let outputs = session
         .run(ort::inputs![
-            input_names[0].clone() => img_value,
-            input_names[1].clone() => mask_value,
+            img_key => img_value,
+            mask_key => mask_value,
         ])
         .map_err(|e| anyhow::anyhow!("run lama: {e}"))?;
 
@@ -122,12 +140,24 @@ pub fn inpaint(image: &RgbaImage, mask: &GrayImage) -> Result<RgbaImage> {
         other => anyhow::bail!("unexpected lama output shape {other:?}"),
     };
 
+    // Different LaMa ONNX exports use different output ranges — some yield
+    // [0, 1] floats, others yield [0, 255]. Detect which by looking at the
+    // actual max and scale accordingly; treating a [0,255] output as [0,1]
+    // clamps every non-trivial pixel to pure white.
+    let mut max_val = 0.0f32;
+    for &v in out_slice.iter() {
+        if v > max_val {
+            max_val = v;
+        }
+    }
+    let scale = if max_val > 1.5 { 1.0 } else { 255.0 };
+
     let mut result_small = RgbaImage::new(ow as u32, oh as u32);
     for y in 0..oh {
         for x in 0..ow {
-            let r = (out_slice[0 * oh * ow + y * ow + x].clamp(0.0, 1.0) * 255.0) as u8;
-            let g = (out_slice[1 * oh * ow + y * ow + x].clamp(0.0, 1.0) * 255.0) as u8;
-            let b = (out_slice[2 * oh * ow + y * ow + x].clamp(0.0, 1.0) * 255.0) as u8;
+            let r = (out_slice[0 * oh * ow + y * ow + x] * scale).clamp(0.0, 255.0) as u8;
+            let g = (out_slice[1 * oh * ow + y * ow + x] * scale).clamp(0.0, 255.0) as u8;
+            let b = (out_slice[2 * oh * ow + y * ow + x] * scale).clamp(0.0, 255.0) as u8;
             result_small.put_pixel(x as u32, y as u32, image::Rgba([r, g, b, 255]));
         }
     }

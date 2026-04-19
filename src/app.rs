@@ -386,7 +386,6 @@ impl YImageApp {
                         image: out,
                         new_tab: false,
                     });
-                    let _ = tx.send(BgMsg::Progress(label, 1.0));
                 }
                 Err(e) => {
                     let _ = tx.send(BgMsg::Error(format!("{e:#}")));
@@ -418,7 +417,6 @@ impl YImageApp {
                         image: out,
                         new_tab: false,
                     });
-                    let _ = tx.send(BgMsg::Progress(label, 1.0));
                 }
                 Err(e) => {
                     let _ = tx.send(BgMsg::Error(format!("{e:#}")));
