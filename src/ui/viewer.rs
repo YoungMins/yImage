@@ -158,10 +158,6 @@ fn handle_keyboard(ctx: &egui::Context, app: &mut YImageApp) {
 // ── Welcome screen ─────────────────────────────────────────────────
 
 fn show_welcome(ui: &mut egui::Ui, app: &mut YImageApp) {
-    // Paint a diagonal gradient background (light sky blue → light purple)
-    // across the entire central panel before laying out the welcome content.
-    paint_gradient_background(ui, app.settings.theme_dark);
-
     let avail = ui.available_size();
     let card_width = 720.0_f32.min(avail.x - 40.0);
 
@@ -288,37 +284,6 @@ fn show_welcome(ui: &mut egui::Ui, app: &mut YImageApp) {
             });
         },
     );
-}
-
-fn paint_gradient_background(ui: &egui::Ui, dark: bool) {
-    // Soft diagonal gradient: top-left light sky blue → bottom-right light
-    // purple. In dark mode we fall back to deeper, desaturated siblings so
-    // the canvas still feels airy without clashing with the UI chrome.
-    let (tl, tr, bl, br) = if dark {
-        (
-            Color32::from_rgb(0x1F, 0x22, 0x2C),
-            Color32::from_rgb(0x22, 0x22, 0x30),
-            Color32::from_rgb(0x22, 0x22, 0x30),
-            Color32::from_rgb(0x28, 0x22, 0x34),
-        )
-    } else {
-        (
-            Color32::from_rgb(0xEE, 0xF6, 0xFF),
-            Color32::from_rgb(0xF2, 0xEF, 0xFF),
-            Color32::from_rgb(0xF0, 0xF4, 0xFF),
-            Color32::from_rgb(0xF6, 0xEE, 0xFF),
-        )
-    };
-
-    let rect = ui.max_rect();
-    let mut mesh = egui::Mesh::default();
-    let uv = egui::epaint::WHITE_UV;
-    mesh.vertices.push(egui::epaint::Vertex { pos: rect.left_top(), uv, color: tl });
-    mesh.vertices.push(egui::epaint::Vertex { pos: rect.right_top(), uv, color: tr });
-    mesh.vertices.push(egui::epaint::Vertex { pos: rect.right_bottom(), uv, color: br });
-    mesh.vertices.push(egui::epaint::Vertex { pos: rect.left_bottom(), uv, color: bl });
-    mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
-    ui.painter().add(egui::Shape::mesh(mesh));
 }
 
 fn recent_card(

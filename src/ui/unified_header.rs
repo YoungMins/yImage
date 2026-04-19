@@ -27,23 +27,18 @@ const TOOL_BTN_HEIGHT: f32 = 34.0;
 /// pick up theme-toggle changes the very next frame, instead of leaving
 /// stale dark separator lines after switching back to light.
 fn tab_bar_frame(ctx: &egui::Context) -> egui::Frame {
-    let dark = ctx.style().visuals.dark_mode;
-    let fill = if dark {
-        theme::GRADIENT_TOP_DARK
-    } else {
-        theme::GRADIENT_TOP_LIGHT
-    };
+    let v = &ctx.style().visuals;
     egui::Frame::none()
-        .fill(fill)
+        .fill(v.panel_fill)
         .stroke(egui::Stroke::NONE)
 }
 
 fn ribbon_frame(ctx: &egui::Context) -> egui::Frame {
     let dark = ctx.style().visuals.dark_mode;
     let fill = if dark {
-        theme::GRADIENT_MID_DARK
+        Color32::from_rgb(0x24, 0x24, 0x26)
     } else {
-        theme::GRADIENT_MID_LIGHT
+        Color32::from_rgb(0xED, 0xED, 0xEF)
     };
     egui::Frame::none()
         .fill(fill)

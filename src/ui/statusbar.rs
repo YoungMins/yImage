@@ -14,14 +14,8 @@ use crate::app::YImageApp;
 use crate::ui::theme;
 
 pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
-    let dark = ctx.style().visuals.dark_mode;
-    let bar_frame = egui::Frame::none()
-        .fill(if dark { theme::GRADIENT_BOT_DARK } else { theme::GRADIENT_BOT_LIGHT })
-        .stroke(egui::Stroke::NONE);
-
     egui::TopBottomPanel::bottom("statusbar")
         .exact_height(30.0)
-        .frame(bar_frame)
         .show(ctx, |ui| {
             ui.with_layout(
                 egui::Layout::left_to_right(egui::Align::Center),

@@ -42,15 +42,9 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         return;
     }
 
-    let dark = ctx.style().visuals.dark_mode;
-    let strip_frame = egui::Frame::none()
-        .fill(if dark { theme::GRADIENT_BOT_DARK } else { theme::GRADIENT_BOT_LIGHT })
-        .stroke(egui::Stroke::NONE);
-
     egui::TopBottomPanel::bottom("thumbnails_strip")
         .exact_height(STRIP_HEIGHT)
-        .frame(strip_frame)
-        .show_separator_line(false)
+        .show_separator_line(true)
         .show(ctx, |ui| {
             let entries = app.folder_entries.lock().clone();
             if entries.is_empty() {
