@@ -64,12 +64,36 @@ pub fn show_viewport(ctx: &egui::Context, app: &mut YImageApp) {
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
 
+    // Title bar shows just the GIF icon — no app icon prefix. Window position
+    // is centered on the main yImage window (falls back to monitor centre).
     let title = format!("\u{1F39E}  {}", app.i18n.t("gif-builder-title", &[]));
     let viewport_id = egui::ViewportId::from_hash_of("yimage-gif-builder");
-    let viewport_builder = egui::ViewportBuilder::default()
+    let win_size = egui::Vec2::new(1000.0, 620.0);
+
+    let parent_rect = ctx.input(|i| i.viewport().outer_rect);
+    let monitor_size = ctx.input(|i| i.viewport().monitor_size);
+    let position = parent_rect
+        .map(|r| r.center() - win_size * 0.5)
+        .or_else(|| {
+            monitor_size.map(|m| egui::pos2((m.x - win_size.x) * 0.5, (m.y - win_size.y) * 0.5))
+        });
+
+    // Use a 1x1 transparent IconData so Windows / X11 don't inherit the main
+    // yImage executable icon — the title bar then shows just the title text
+    // plus the GIF emoji glyph.
+    let blank_icon = std::sync::Arc::new(egui::IconData {
+        rgba: vec![0, 0, 0, 0],
+        width: 1,
+        height: 1,
+    });
+    let mut viewport_builder = egui::ViewportBuilder::default()
         .with_title(&title)
-        .with_inner_size([1000.0, 620.0])
-        .with_min_inner_size([720.0, 520.0]);
+        .with_inner_size(win_size)
+        .with_min_inner_size([720.0, 520.0])
+        .with_icon(blank_icon);
+    if let Some(pos) = position {
+        viewport_builder = viewport_builder.with_position(pos);
+    }
 
     ctx.show_viewport_immediate(viewport_id, viewport_builder, |vp_ctx, _class| {
         // Close button / window-close event from the OS.

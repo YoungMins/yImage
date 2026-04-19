@@ -21,9 +21,23 @@ const TOOL_BTN_HEIGHT: f32 = 34.0;
 
 // ── Row 1: Tab bar ─────────────────────────────────────────────────
 
+/// A panel frame that always pulls its fill / stroke from the *current*
+/// style. Building the frame eagerly each call (instead of relying on
+/// `TopBottomPanel`'s default cached chrome) means the tab bar and ribbon
+/// pick up theme-toggle changes the very next frame, instead of leaving
+/// stale dark separator lines after switching back to light.
+fn panel_frame(ctx: &egui::Context) -> egui::Frame {
+    let v = &ctx.style().visuals;
+    egui::Frame::none()
+        .fill(v.panel_fill)
+        .stroke(egui::Stroke::NONE)
+}
+
 pub fn show_tab_bar(ctx: &egui::Context, app: &mut YImageApp) {
     egui::TopBottomPanel::top("tab_bar")
         .exact_height(TAB_BAR_HEIGHT)
+        .frame(panel_frame(ctx))
+        .show_separator_line(false)
         .show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal_centered(|ui| {
@@ -45,6 +59,8 @@ pub fn show_tab_bar(ctx: &egui::Context, app: &mut YImageApp) {
 pub fn show_ribbon(ctx: &egui::Context, app: &mut YImageApp) {
     egui::TopBottomPanel::top("ribbon_toolbar")
         .exact_height(RIBBON_HEIGHT)
+        .frame(panel_frame(ctx))
+        .show_separator_line(false)
         .show(ctx, |ui| {
             ui.add_space(2.0);
             ui.horizontal_centered(|ui| {
@@ -538,6 +554,10 @@ fn view_section(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
         } else {
             theme::apply_light(ctx);
         }
+        // Force a fresh paint so any cached panel chrome is re-built
+        // against the new visuals (otherwise the panel separator strokes
+        // can linger with the previous theme's colour for a frame).
+        ctx.request_repaint();
     }
     #[cfg(all(windows, feature = "capture"))]
     {
