@@ -105,15 +105,12 @@ pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
 
 fn build_style(dark: bool) -> Style {
     let mut style = Style::default();
-    style.spacing.item_spacing = Vec2::new(10.0, 8.0);
-    style.spacing.button_padding = Vec2::new(14.0, 7.0);
-    style.spacing.menu_margin = Margin::symmetric(8, 6);
-    style.spacing.window_margin = Margin::same(14);
-    style.spacing.indent = 20.0;
-    style.spacing.slider_width = 180.0;
-    style.spacing.interact_size = Vec2::new(36.0, 30.0);
-    style.spacing.icon_width = 16.0;
-    style.spacing.icon_spacing = 6.0;
+    // Keep spacing close to egui defaults so panels and menus don't blow
+    // out vertically. Only nudge the few values that need room to breathe
+    // for the Apple look (slightly larger sliders, icons).
+    style.spacing.slider_width = 160.0;
+    style.spacing.icon_width = 14.0;
+    style.spacing.icon_spacing = 4.0;
     style.visuals = if dark {
         build_dark_visuals()
     } else {
