@@ -114,15 +114,25 @@ fn ribbon_group(
         theme::TEXT_SECONDARY_LIGHT
     };
     ui.vertical(|ui| {
-        ui.horizontal(|ui| {
+        let tools_resp = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             tools(ui);
         });
+        let group_width = tools_resp.response.rect.width();
         ui.add_space(1.0);
-        ui.label(
-            RichText::new(section_label)
-                .size(theme::FONT_TINY)
-                .color(text_color),
+        let galley = ui.painter().layout_no_wrap(
+            section_label.to_string(),
+            egui::FontId::proportional(theme::FONT_TINY),
+            text_color,
+        );
+        let (rect, _) = ui.allocate_exact_size(
+            Vec2::new(group_width, galley.size().y),
+            egui::Sense::hover(),
+        );
+        ui.painter().galley(
+            egui::pos2(rect.center().x - galley.size().x * 0.5, rect.top()),
+            galley,
+            Color32::TRANSPARENT,
         );
     });
 }
