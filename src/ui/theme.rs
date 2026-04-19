@@ -25,6 +25,15 @@ pub const DIVIDER_LIGHT: Color32 = Color32::from_rgb(0xE5, 0xE5, 0xEA);
 pub const SUCCESS: Color32 = Color32::from_rgb(0x30, 0xD1, 0x58);
 pub const WARNING: Color32 = Color32::from_rgb(0xFF, 0x9F, 0x0A);
 
+// Gradient tints — panels pick a sky-blue (top) or lavender (bottom) tone
+// so the whole window reads as one continuous sky→purple gradient.
+pub const GRADIENT_TOP_LIGHT: Color32 = Color32::from_rgb(0xEC, 0xF4, 0xFF);
+pub const GRADIENT_MID_LIGHT: Color32 = Color32::from_rgb(0xE8, 0xF0, 0xFF);
+pub const GRADIENT_BOT_LIGHT: Color32 = Color32::from_rgb(0xF2, 0xEC, 0xFF);
+pub const GRADIENT_TOP_DARK: Color32 = Color32::from_rgb(0x1E, 0x20, 0x28);
+pub const GRADIENT_MID_DARK: Color32 = Color32::from_rgb(0x22, 0x22, 0x2A);
+pub const GRADIENT_BOT_DARK: Color32 = Color32::from_rgb(0x24, 0x20, 0x2C);
+
 // Typography scale.
 pub const FONT_DISPLAY: f32 = 28.0;
 pub const FONT_TITLE: f32 = 16.0;
@@ -63,9 +72,9 @@ pub fn card_frame(dark: bool) -> egui::Frame {
 /// Frame for the contextual toolbar that docks to the top of the canvas.
 pub fn toolbar_frame(dark: bool) -> egui::Frame {
     let fill = if dark {
-        Color32::from_rgb(0x24, 0x24, 0x26)
+        GRADIENT_MID_DARK
     } else {
-        Color32::from_rgb(0xF8, 0xF8, 0xFA)
+        GRADIENT_MID_LIGHT
     };
     let stroke_color = if dark { DIVIDER_DARK } else { DIVIDER_LIGHT };
     egui::Frame::none()

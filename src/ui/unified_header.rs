@@ -26,19 +26,24 @@ const TOOL_BTN_HEIGHT: f32 = 34.0;
 /// `TopBottomPanel`'s default cached chrome) means the tab bar and ribbon
 /// pick up theme-toggle changes the very next frame, instead of leaving
 /// stale dark separator lines after switching back to light.
-fn panel_frame(ctx: &egui::Context) -> egui::Frame {
-    let v = &ctx.style().visuals;
+fn tab_bar_frame(ctx: &egui::Context) -> egui::Frame {
+    let dark = ctx.style().visuals.dark_mode;
+    let fill = if dark {
+        theme::GRADIENT_TOP_DARK
+    } else {
+        theme::GRADIENT_TOP_LIGHT
+    };
     egui::Frame::none()
-        .fill(v.panel_fill)
+        .fill(fill)
         .stroke(egui::Stroke::NONE)
 }
 
 fn ribbon_frame(ctx: &egui::Context) -> egui::Frame {
     let dark = ctx.style().visuals.dark_mode;
     let fill = if dark {
-        Color32::from_rgb(0x24, 0x24, 0x26)
+        theme::GRADIENT_MID_DARK
     } else {
-        Color32::from_rgb(0xED, 0xED, 0xEF)
+        theme::GRADIENT_MID_LIGHT
     };
     egui::Frame::none()
         .fill(fill)
@@ -48,7 +53,7 @@ fn ribbon_frame(ctx: &egui::Context) -> egui::Frame {
 pub fn show_tab_bar(ctx: &egui::Context, app: &mut YImageApp) {
     egui::TopBottomPanel::top("tab_bar")
         .exact_height(TAB_BAR_HEIGHT)
-        .frame(panel_frame(ctx))
+        .frame(tab_bar_frame(ctx))
         .show_separator_line(false)
         .show(ctx, |ui| {
             ui.add_space(4.0);

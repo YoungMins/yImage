@@ -303,10 +303,10 @@ fn paint_gradient_background(ui: &egui::Ui, dark: bool) {
         )
     } else {
         (
-            Color32::from_rgb(0xDE, 0xEF, 0xFF),
-            Color32::from_rgb(0xE8, 0xE6, 0xFF),
-            Color32::from_rgb(0xE6, 0xED, 0xFF),
-            Color32::from_rgb(0xF0, 0xE3, 0xFF),
+            Color32::from_rgb(0xEE, 0xF6, 0xFF),
+            Color32::from_rgb(0xF2, 0xEF, 0xFF),
+            Color32::from_rgb(0xF0, 0xF4, 0xFF),
+            Color32::from_rgb(0xF6, 0xEE, 0xFF),
         )
     };
 
