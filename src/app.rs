@@ -301,6 +301,7 @@ impl YImageApp {
         self.tabs.push(Tab::new(id, doc));
         self.active_tab = self.tabs.len() - 1;
         self.dialog.obj_mask = None;
+        self.dialog.obj_mask_tex = None;
     }
 
     pub fn close_tab(&mut self, index: usize) {
@@ -684,6 +685,8 @@ impl YImageApp {
                             tab.doc.replace(image);
                             tab.texture_dirty = true;
                         }
+                        self.dialog.obj_mask = None;
+                        self.dialog.obj_mask_tex = None;
                     } else if new_tab || self.tabs.is_empty() {
                         let doc = Document::from_rgba(image, Some(path.clone()));
                         self.add_tab(doc);
@@ -698,6 +701,8 @@ impl YImageApp {
                             tab.texture_dirty = true;
                             tab.viewer.reset_view = true;
                         }
+                        self.dialog.obj_mask = None;
+                        self.dialog.obj_mask_tex = None;
                         self.status = self
                             .i18n
                             .t("status-loaded", &[("path", path.display().to_string())]);

@@ -170,6 +170,7 @@ fn obj_remove_controls(ui: &mut egui::Ui, app: &mut YImageApp) {
             .clicked()
         {
             app.dialog.obj_mask = None;
+            app.dialog.obj_mask_tex = None;
         }
         if ui
             .add_enabled(

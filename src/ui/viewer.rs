@@ -521,7 +521,7 @@ fn handle_tool_input(app: &mut YImageApp, response: &egui::Response, rect: Rect,
 fn draw_overlays(
     ctx: &egui::Context,
     ui: &egui::Ui,
-    app: &YImageApp,
+    app: &mut YImageApp,
     response: &egui::Response,
     rect: Rect,
     img_size: Vec2,
@@ -616,20 +616,36 @@ fn draw_overlays(
         }
     }
 
-    // Object-removal mask: visualise the painted mask with a red overlay.
+    // Object-removal mask: solid semi-transparent red overlay via GPU texture.
     if app.tool == ToolKind::ObjectRemove {
         if let Some(mask) = app.dialog.obj_mask.as_ref() {
-            let scale = rect.width() / img_size.x.max(1.0);
-            let sample_step = 8u32.max((mask.width() / 256).max(1));
-            let dot = Color32::from_rgba_unmultiplied(0xE0, 0x20, 0x20, 140);
-            for y in (0..mask.height()).step_by(sample_step as usize) {
-                for x in (0..mask.width()).step_by(sample_step as usize) {
-                    if mask.get_pixel(x, y).0[0] > 127 {
-                        let p = rect.min + Vec2::new(x as f32 * scale, y as f32 * scale);
-                        painter.circle_filled(p, (sample_step as f32 * scale * 0.5).max(1.0), dot);
+            let w = mask.width() as usize;
+            let h = mask.height() as usize;
+            let pixels: Vec<Color32> = mask
+                .pixels()
+                .map(|p| {
+                    if p.0[0] > 127 {
+                        Color32::from_rgba_unmultiplied(0xE0, 0x30, 0x30, 100)
+                    } else {
+                        Color32::TRANSPARENT
                     }
-                }
-            }
+                })
+                .collect();
+            let color_img = ColorImage {
+                size: [w, h],
+                source_size: egui::vec2(w as f32, h as f32),
+                pixels,
+            };
+            let tex = app.dialog.obj_mask_tex.get_or_insert_with(|| {
+                ctx.load_texture("obj_mask_overlay", color_img.clone(), TextureOptions::LINEAR)
+            });
+            tex.set(color_img, TextureOptions::LINEAR);
+            painter.image(
+                tex.id(),
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
         }
     }
 }

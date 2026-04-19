@@ -62,6 +62,7 @@ pub struct DialogState {
     pub shape: ShapeState,
     pub shape_start: Option<(f32, f32)>,
     pub obj_mask: Option<GrayImage>,
+    pub obj_mask_tex: Option<egui::TextureHandle>,
 
     // Fixed-region capture rectangle (in screen coordinates).
     pub fixed_region: Option<(i32, i32, u32, u32)>,

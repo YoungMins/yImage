@@ -241,6 +241,7 @@ fn tabs_zone(ui: &mut egui::Ui, app: &mut YImageApp) {
     } else if let Some(idx) = switch_to {
         if idx != app.active_tab {
             app.dialog.obj_mask = None;
+            app.dialog.obj_mask_tex = None;
         }
         app.active_tab = idx;
     }
