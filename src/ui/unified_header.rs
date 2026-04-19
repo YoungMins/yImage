@@ -97,30 +97,33 @@ pub fn show_ribbon(ctx: &egui::Context, app: &mut YImageApp) {
 }
 
 /// Draw a named ribbon group: a vertical stack of [tools row] + [label].
+///
+/// The inner `ui.vertical` is wrapped in `ui.scope` so it shrinks to its
+/// content width rather than stretching to `ui.available_width()`. Without
+/// this, a centred caption inside `top_down(Center)` would claim the full
+/// remaining horizontal space and push sibling groups off-screen.
 fn ribbon_group(
     ui: &mut egui::Ui,
     dark: bool,
     section_label: &str,
     tools: impl FnOnce(&mut egui::Ui),
 ) {
+    let text_color = if dark {
+        theme::TEXT_SECONDARY_DARK
+    } else {
+        theme::TEXT_SECONDARY_LIGHT
+    };
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             tools(ui);
         });
         ui.add_space(1.0);
-        let text_color = if dark {
-            theme::TEXT_SECONDARY_DARK
-        } else {
-            theme::TEXT_SECONDARY_LIGHT
-        };
-        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-            ui.label(
-                RichText::new(section_label)
-                    .size(theme::FONT_TINY)
-                    .color(text_color),
-            );
-        });
+        ui.label(
+            RichText::new(section_label)
+                .size(theme::FONT_TINY)
+                .color(text_color),
+        );
     });
 }
 
@@ -257,40 +260,19 @@ fn tool_btn(
 
 // ── Menu ───────────────────────────────────────────────────────────
 
-/// Render a menu row: primary label on the left, right-aligned keyboard
-/// shortcut hint rendered in a dim monospace. Returns the button's Response
-/// so callers can check `.clicked()`.
+/// Render a menu row: primary label on the left with a right-aligned
+/// keyboard-shortcut hint (via egui's `Button::shortcut_text`, which matches
+/// native menu styling without adding any indentation).
 fn menu_row(
     ui: &mut egui::Ui,
     enabled: bool,
     label: &str,
     shortcut: &str,
 ) -> egui::Response {
-    let row = ui.add_enabled_ui(enabled, |ui| {
-        ui.horizontal(|ui| {
-            ui.set_min_width(220.0);
-            let resp = ui.add(
-                egui::Button::new(RichText::new(label).size(theme::FONT_BODY))
-                    .frame(false)
-                    .min_size(Vec2::new(160.0, 22.0)),
-            );
-            ui.with_layout(
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    let color = ui.visuals().text_color().linear_multiply(0.45);
-                    ui.label(
-                        RichText::new(shortcut)
-                            .size(theme::FONT_TINY)
-                            .monospace()
-                            .color(color),
-                    );
-                },
-            );
-            resp
-        })
-        .inner
-    });
-    row.inner
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(label).shortcut_text(shortcut),
+    )
 }
 
 fn menu_button(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
