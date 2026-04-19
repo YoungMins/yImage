@@ -103,11 +103,12 @@ pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
     );
 }
 
-/// Build a full Style with our Apple spacing + the given visuals. egui 0.34
-/// keeps separate styles for dark and light mode (Options::dark_style /
-/// light_style), so we build one of these for each theme at install time.
-fn build_style_with(visuals: Visuals) -> Style {
-    let mut style = Style::default();
+/// Overlay our Apple-inspired spacing tokens onto an existing Style,
+/// leaving every other field untouched. Used for both theme slots so
+/// egui's own pre-configured fields (text styles, animation times, any
+/// eframe integration defaults, etc.) stay intact — we only paint over
+/// spacing and, separately, visuals.
+fn apply_spacing(style: &mut Style) {
     style.spacing.item_spacing = Vec2::new(10.0, 8.0);
     style.spacing.button_padding = Vec2::new(14.0, 7.0);
     style.spacing.menu_margin = Margin::symmetric(8, 6);
@@ -117,18 +118,19 @@ fn build_style_with(visuals: Visuals) -> Style {
     style.spacing.interact_size = Vec2::new(36.0, 30.0);
     style.spacing.icon_width = 16.0;
     style.spacing.icon_spacing = 6.0;
-    style.visuals = visuals;
-    style
 }
 
-/// Install the full theme. Populates BOTH of egui's theme slots
-/// (`dark_style` and `light_style`) so that switching between them at
-/// runtime always picks up our spacing + visuals — not egui's raw
-/// defaults. Then pins the active theme to the user's saved preference so
-/// the OS-level "follow system" fallback can't silently override it.
+/// Install the full theme. Paints our spacing + visuals onto BOTH of
+/// egui's theme slots (`dark_style` / `light_style`) via in-place mutation
+/// — not via full Style replacement — so any fields egui or eframe set up
+/// for us (text styles, animation times, interaction radii, …) survive.
+/// Then pins the active theme to the user's saved preference so the
+/// OS-level "follow system" fallback can't silently override it on
+/// restart.
 pub fn install(ctx: &egui::Context, dark: bool) {
-    ctx.set_style_of(egui::Theme::Dark, build_style_with(build_dark_visuals()));
-    ctx.set_style_of(egui::Theme::Light, build_style_with(build_light_visuals()));
+    ctx.all_styles_mut(apply_spacing);
+    ctx.style_mut_of(egui::Theme::Dark, |s| s.visuals = build_dark_visuals());
+    ctx.style_mut_of(egui::Theme::Light, |s| s.visuals = build_light_visuals());
     ctx.set_theme(if dark {
         egui::ThemePreference::Dark
     } else {
