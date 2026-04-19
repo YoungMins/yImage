@@ -772,13 +772,14 @@ impl eframe::App for YImageApp {
         }
 
         // Declaration order matters for egui panel layout. New minimal stack:
-        // 1. Unified header  — tabs + tools + menu, all on one strip.
-        // 2. Context toolbar — appears directly under the header when a tool
-        //    is active, docked to the canvas.
-        // 3. Status bar      — full-width interactive strip at the bottom.
-        // 4. Thumbnails      — optional bottom filmstrip (hidden by default).
-        // 5. CentralPanel    — viewer fills whatever remains.
-        ui::unified_header::show(&ctx, self);
+        // 1. Tab bar        — hamburger menu + document tabs.
+        // 2. Ribbon toolbar — tool buttons grouped into named sections.
+        // 3. Context toolbar — appears under the ribbon when a tool is active.
+        // 4. Status bar      — full-width interactive strip at the bottom.
+        // 5. Thumbnails      — optional bottom filmstrip (hidden by default).
+        // 6. CentralPanel    — viewer fills whatever remains.
+        ui::unified_header::show_tab_bar(&ctx, self);
+        ui::unified_header::show_ribbon(&ctx, self);
         ui::context_toolbar::show(&ctx, self);
         ui::statusbar::show(&ctx, self);
         ui::thumbnails::show(&ctx, self);

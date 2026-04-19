@@ -1,17 +1,13 @@
-// Consolidated top header strip.
+// Top chrome: two rows.
 //
-// Replaces the previous three chrome panels (toolbar + tabbar + toolpanel) so
-// the canvas gets back the vertical real estate they consumed. A single
-// 46-px-tall `TopBottomPanel::top` with three zones:
+// Row 1 — Tab bar: [≡ Menu] [Tab1] [Tab2] [Tab3 ×] ...
+// Row 2 — Ribbon toolbar: grouped tool sections with labels.
 //
-//   · Left   — compact tab pills (title + close button per tab).
-//   · Center — inline tool buttons: icon + short label, grouped with hairlines.
-//   · Right  — undo/redo, active zoom, hamburger `≡` that opens the full menu.
-//
-// The old menu contents (File/Edit/View/Lang) are now collapsed behind the
-// hamburger, keeping the strip light while still exposing every command.
+// The tab bar always occupies the topmost strip. The ribbon sits directly
+// below it and organises tools into named groups separated by thin vertical
+// hairlines, similar to a simplified Office-style ribbon.
 
-use egui::{Color32, CornerRadius, RichText, Stroke, Vec2};
+use egui::{Color32, CornerRadius, Margin, RichText, Stroke, Vec2};
 
 use crate::app::YImageApp;
 #[cfg(windows)]
@@ -19,44 +15,123 @@ use crate::app::BgMsg;
 use crate::tools::ToolKind;
 use crate::ui::theme;
 
-const HEADER_HEIGHT: f32 = 46.0;
-const TOOL_BTN_HEIGHT: f32 = 30.0;
+const TAB_BAR_HEIGHT: f32 = 38.0;
+const RIBBON_HEIGHT: f32 = 56.0;
+const TOOL_BTN_HEIGHT: f32 = 34.0;
 
-pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
-    egui::TopBottomPanel::top("unified_header")
-        .exact_height(HEADER_HEIGHT)
+// ── Row 1: Tab bar ─────────────────────────────────────────────────
+
+pub fn show_tab_bar(ctx: &egui::Context, app: &mut YImageApp) {
+    egui::TopBottomPanel::top("tab_bar")
+        .exact_height(TAB_BAR_HEIGHT)
         .show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                ui.add_space(8.0);
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.add_space(4.0);
 
-                // ── Left: tab pills ───────────────────────────────────
+                // Hamburger menu — far left.
+                menu_button(ctx, ui, app);
+                ui.add_space(6.0);
+
+                // Tabs.
                 tabs_zone(ui, app);
-
-                // ── Right zone laid out right-to-left ─────────────────
-                ui.with_layout(
-                    egui::Layout::right_to_left(egui::Align::Center),
-                    |ui| {
-                        ui.add_space(6.0);
-                        menu_button(ctx, ui, app);
-                        ui.add_space(4.0);
-                        zoom_label(ui, app);
-                        ui.add_space(4.0);
-                        undo_redo(ui, app);
-
-                        // Center: tool buttons fill the remaining space.
-                        ui.with_layout(
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.add_space(12.0);
-                                tools_zone(ui, app);
-                            },
-                        );
-                    },
-                );
             });
         });
+}
+
+// ── Row 2: Ribbon toolbar ──────────────────────────────────────────
+
+pub fn show_ribbon(ctx: &egui::Context, app: &mut YImageApp) {
+    egui::TopBottomPanel::top("ribbon_toolbar")
+        .exact_height(RIBBON_HEIGHT)
+        .show(ctx, |ui| {
+            ui.add_space(2.0);
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.add_space(8.0);
+
+                // ── Selection group ──
+                ribbon_group(ui, app.settings.theme_dark, &app.i18n.t("tool-none", &[]), |ui| {
+                    tool_btn(ui, app, ToolKind::None, "\u{2196}", "tool-none");
+                });
+
+                group_separator(ui);
+
+                // ── Drawing group ──
+                ribbon_group(ui, app.settings.theme_dark, &app.i18n.t("menu-edit", &[]), |ui| {
+                    tool_btn(ui, app, ToolKind::Draw, "\u{270F}", "tool-draw");
+                    tool_btn(ui, app, ToolKind::Mosaic, "\u{25A3}", "tool-mosaic");
+                    tool_btn(ui, app, ToolKind::Text, "T", "tool-text");
+                    tool_btn(ui, app, ToolKind::Shape, "\u{25FB}", "tool-shape");
+                });
+
+                group_separator(ui);
+
+                // ── AI group ──
+                ribbon_group(ui, app.settings.theme_dark, "AI", |ui| {
+                    tool_btn(
+                        ui,
+                        app,
+                        ToolKind::BackgroundRemove,
+                        "\u{2702}",
+                        "tool-bg-remove",
+                    );
+                    tool_btn(
+                        ui,
+                        app,
+                        ToolKind::ObjectRemove,
+                        "\u{2296}",
+                        "tool-obj-remove",
+                    );
+                });
+
+                group_separator(ui);
+
+                // ── Animation group ──
+                ribbon_group(ui, app.settings.theme_dark, "GIF", |ui| {
+                    tool_btn(ui, app, ToolKind::Gif, "\u{25B6}", "tool-gif");
+                });
+            });
+        });
+}
+
+/// Draw a named ribbon group: a vertical stack of [tools row] + [label].
+fn ribbon_group(
+    ui: &mut egui::Ui,
+    dark: bool,
+    section_label: &str,
+    tools: impl FnOnce(&mut egui::Ui),
+) {
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            tools(ui);
+        });
+        ui.add_space(1.0);
+        let text_color = if dark {
+            theme::TEXT_SECONDARY_DARK
+        } else {
+            theme::TEXT_SECONDARY_LIGHT
+        };
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+            ui.label(
+                RichText::new(section_label)
+                    .size(theme::FONT_TINY)
+                    .color(text_color),
+            );
+        });
+    });
+}
+
+fn group_separator(ui: &mut egui::Ui) {
+    ui.add_space(4.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, RIBBON_HEIGHT - 12.0), egui::Sense::hover());
+    ui.painter().line_segment(
+        [rect.center_top(), rect.center_bottom()],
+        Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+    );
+    ui.add_space(4.0);
 }
 
 // ── Tabs ───────────────────────────────────────────────────────────
@@ -75,78 +150,63 @@ fn tabs_zone(ui: &mut egui::Ui, app: &mut YImageApp) {
         } else {
             Color32::TRANSPARENT
         };
+        let text_color = if is_active {
+            theme::ACCENT
+        } else {
+            ui.visuals().text_color()
+        };
+
+        // Tab pill as a single clickable region.
         let frame = egui::Frame::none()
-            .inner_margin(egui::Margin::symmetric(10, 3))
+            .inner_margin(Margin::symmetric(10, 4))
             .corner_radius(CornerRadius::same(8))
             .fill(fill);
 
-        let r = frame
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    let text_color = if is_active {
-                        theme::ACCENT
-                    } else {
-                        ui.visuals().text_color()
-                    };
-                    ui.label(
+        frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+
+                // Tab label — clicking switches tab.
+                let label_resp = ui.add(
+                    egui::Label::new(
                         RichText::new(format!("{dirty_marker}{title}"))
                             .size(12.5)
                             .color(text_color),
-                    );
-                    let close_resp = ui.add(
-                        egui::Button::new(
-                            RichText::new("\u{00D7}")
-                                .size(12.0)
-                                .color(ui.visuals().text_color().linear_multiply(0.55)),
-                        )
-                        .frame(false)
-                        .min_size(Vec2::new(14.0, 14.0)),
-                    );
-                    if close_resp.clicked() {
-                        close_idx = Some(i);
-                    }
-                });
-            })
-            .response;
+                    )
+                    .sense(egui::Sense::click()),
+                );
+                if label_resp.clicked() {
+                    switch_to = Some(i);
+                }
 
-        if r.interact(egui::Sense::click()).clicked() && close_idx.is_none() {
-            switch_to = Some(i);
-        }
+                // Close button — separate clickable widget.
+                let x_resp = ui.add(
+                    egui::Button::new(
+                        RichText::new("\u{00D7}")
+                            .size(13.0)
+                            .color(ui.visuals().text_color().linear_multiply(0.5)),
+                    )
+                    .frame(false)
+                    .min_size(Vec2::new(18.0, 18.0)),
+                );
+                if x_resp.clicked() {
+                    close_idx = Some(i);
+                }
+            });
+        });
     }
 
-    if let Some(idx) = switch_to {
+    if let Some(idx) = close_idx {
+        app.close_tab(idx);
+    } else if let Some(idx) = switch_to {
         if idx != app.active_tab {
             app.dialog.obj_mask = None;
         }
         app.active_tab = idx;
     }
-    if let Some(idx) = close_idx {
-        app.close_tab(idx);
-    }
 }
 
-// ── Tools ──────────────────────────────────────────────────────────
-
-fn tools_zone(ui: &mut egui::Ui, app: &mut YImageApp) {
-    tool_btn(ui, app, ToolKind::None, "\u{2196}", "tool-none");
-    vertical_divider(ui);
-    tool_btn(ui, app, ToolKind::Draw, "\u{270F}", "tool-draw");
-    tool_btn(ui, app, ToolKind::Mosaic, "\u{25A3}", "tool-mosaic");
-    tool_btn(ui, app, ToolKind::Text, "A", "tool-text");
-    tool_btn(ui, app, ToolKind::Shape, "\u{25FB}", "tool-shape");
-    vertical_divider(ui);
-    tool_btn(
-        ui,
-        app,
-        ToolKind::BackgroundRemove,
-        "\u{2702}",
-        "tool-bg-remove",
-    );
-    tool_btn(ui, app, ToolKind::ObjectRemove, "\u{2296}", "tool-obj-remove");
-    vertical_divider(ui);
-    tool_btn(ui, app, ToolKind::Gif, "\u{25B6}", "tool-gif");
-}
+// ── Tool button ────────────────────────────────────────────────────
 
 fn tool_btn(
     ui: &mut egui::Ui,
@@ -170,8 +230,8 @@ fn tool_btn(
     };
 
     let btn = egui::Button::new(
-        RichText::new(format!("{icon}  {label}"))
-            .size(12.5)
+        RichText::new(format!("{icon} {label}"))
+            .size(12.0)
             .color(text_color),
     )
     .min_size(Vec2::new(0.0, TOOL_BTN_HEIGHT))
@@ -184,78 +244,25 @@ fn tool_btn(
     }
 }
 
-fn vertical_divider(ui: &mut egui::Ui) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, 18.0), egui::Sense::hover());
-    ui.painter().line_segment(
-        [rect.center_top(), rect.center_bottom()],
-        Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-    );
-}
-
-// ── Right-side controls ────────────────────────────────────────────
-
-fn undo_redo(ui: &mut egui::Ui, app: &mut YImageApp) {
-    // Note: egui lays these out right-to-left because of the outer layout, so
-    // add the redo arrow first so the user sees [undo | redo] left-to-right.
-    let redo = ui.add(
-        egui::Button::new(RichText::new("\u{21B7}").size(14.0))
-            .min_size(Vec2::new(26.0, 26.0))
-            .frame(false),
-    );
-    if redo.clicked() {
-        if let Some(tab) = app.active_tab_mut() {
-            if tab.doc.redo() {
-                tab.texture_dirty = true;
-            }
-        }
-    }
-    let undo = ui.add(
-        egui::Button::new(RichText::new("\u{21B6}").size(14.0))
-            .min_size(Vec2::new(26.0, 26.0))
-            .frame(false),
-    );
-    if undo.clicked() {
-        if let Some(tab) = app.active_tab_mut() {
-            if tab.doc.undo() {
-                tab.texture_dirty = true;
-            }
-        }
-    }
-}
-
-fn zoom_label(ui: &mut egui::Ui, app: &mut YImageApp) {
-    let Some(tab) = app.tabs.get_mut(app.active_tab) else {
-        return;
-    };
-    let pct = tab.viewer.zoom * 100.0;
-    let resp = ui.add(
-        egui::Label::new(
-            RichText::new(format!("{pct:.0}%"))
-                .size(theme::FONT_CAPTION)
-                .monospace(),
-        )
-        .sense(egui::Sense::click()),
-    );
-    if resp.clicked() {
-        tab.viewer.zoom = 1.0;
-    }
-    if resp.secondary_clicked() {
-        tab.viewer.reset_view = true;
-    }
-}
+// ── Menu ───────────────────────────────────────────────────────────
 
 fn menu_button(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
-    let menu_resp = ui.menu_button(RichText::new("\u{2630}").size(16.0), |ui| {
-        ui.set_min_width(200.0);
-        file_section(ctx, ui, app);
-        ui.separator();
-        edit_section(ui, app);
-        ui.separator();
-        view_section(ctx, ui, app);
-        ui.separator();
-        language_section(ui, app);
-    });
-    menu_resp.response.on_hover_text(app.i18n.t("header-menu", &[]));
+    let menu_resp = ui.menu_button(
+        RichText::new("\u{2630}").size(16.0),
+        |ui| {
+            ui.set_min_width(220.0);
+            file_section(ctx, ui, app);
+            ui.separator();
+            edit_section(ui, app);
+            ui.separator();
+            view_section(ctx, ui, app);
+            ui.separator();
+            language_section(ui, app);
+        },
+    );
+    menu_resp
+        .response
+        .on_hover_text(app.i18n.t("header-menu", &[]));
 }
 
 fn file_section(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
@@ -441,7 +448,7 @@ fn file_section(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
 
 fn edit_section(ui: &mut egui::Ui, app: &mut YImageApp) {
     if ui
-        .button(format!("\u{21B6}  {}", app.i18n.t("action-undo", &[])))
+        .button(format!("{}  {}", app.i18n.t("action-undo", &[]), "Ctrl+Z"))
         .clicked()
     {
         if let Some(tab) = app.active_tab_mut() {
@@ -452,7 +459,7 @@ fn edit_section(ui: &mut egui::Ui, app: &mut YImageApp) {
         ui.close_menu();
     }
     if ui
-        .button(format!("\u{21B7}  {}", app.i18n.t("action-redo", &[])))
+        .button(format!("{}  {}", app.i18n.t("action-redo", &[]), "Ctrl+Shift+Z"))
         .clicked()
     {
         if let Some(tab) = app.active_tab_mut() {
@@ -466,7 +473,7 @@ fn edit_section(ui: &mut egui::Ui, app: &mut YImageApp) {
 
 fn view_section(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
     if ui
-        .button(format!("\u{26F6}  {}", app.i18n.t("action-fit", &[])))
+        .button(app.i18n.t("action-fit", &[]))
         .clicked()
     {
         if let Some(tab) = app.active_tab_mut() {
@@ -475,10 +482,7 @@ fn view_section(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
         ui.close_menu();
     }
     if ui
-        .button(format!(
-            "\u{1F50D}  {}",
-            app.i18n.t("action-zoom-100", &[])
-        ))
+        .button(app.i18n.t("action-zoom-100", &[]))
         .clicked()
     {
         if let Some(tab) = app.active_tab_mut() {
@@ -489,10 +493,7 @@ fn view_section(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
     ui.separator();
     let mut show_thumbs = app.thumbs.visible;
     if ui
-        .checkbox(
-            &mut show_thumbs,
-            format!("\u{2630}  {}", app.i18n.t("view-thumbnails", &[])),
-        )
+        .checkbox(&mut show_thumbs, app.i18n.t("view-thumbnails", &[]))
         .changed()
     {
         app.thumbs.visible = show_thumbs;
@@ -500,10 +501,7 @@ fn view_section(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
     ui.separator();
     let mut dark = app.settings.theme_dark;
     if ui
-        .checkbox(
-            &mut dark,
-            format!("\u{1F319}  {}", app.i18n.t("view-dark-theme", &[])),
-        )
+        .checkbox(&mut dark, app.i18n.t("view-dark-theme", &[]))
         .changed()
     {
         app.settings.theme_dark = dark;
@@ -517,7 +515,7 @@ fn view_section(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
     {
         ui.separator();
         if ui
-            .button(format!("\u{2328}  {}", app.i18n.t("menu-hotkeys", &[])))
+            .button(app.i18n.t("menu-hotkeys", &[]))
             .clicked()
         {
             app.dialog.hotkeys_open = true;
