@@ -1,9 +1,19 @@
 name: Release
 
+# Triggered by pushing a "v*" tag (e.g. v0.2.0) — see scripts/release.sh.
+# The tag name is the source of truth for the release version; it is
+# injected into both the Inno Setup script and the portable zip archive
+# so nothing can drift between Cargo.toml and the installer metadata.
+
 on:
   push:
     tags: [ "v*" ]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (no leading v)"
+        required: true
+        type: string
 
 jobs:
   build-windows:
@@ -12,6 +22,30 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Derive version
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $v = $env:GITHUB_REF -replace '^refs/tags/v', ''
+          } elseif ('${{ inputs.version }}') {
+            $v = '${{ inputs.version }}'
+          } else {
+            throw 'no tag or manual version supplied'
+          }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Building version $v"
+
+      - name: Verify Cargo.toml matches tag
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          $cargo = Get-Content Cargo.toml -Raw
+          if ($cargo -notmatch "(?m)^version\s*=\s*`"$([regex]::Escape($v))`"") {
+            Write-Error "Cargo.toml version does not match tag v$v. Run scripts/release.sh before tagging."
+            exit 1
+          }
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -24,7 +58,6 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path assets/models | Out-Null
-          # Replace the URLs below with ones you actually want to ship.
           $u2netp = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
           $lama   = "https://github.com/enesmsahin/simple-lama-inpainting/releases/download/v0.1.0/lama-fp16.onnx"
           try { Invoke-WebRequest -Uri $u2netp -OutFile assets/models/u2netp.onnx }
@@ -34,21 +67,60 @@ jobs:
 
       - name: Install Inno Setup
         shell: pwsh
-        run: choco install innosetup -y
+        run: choco install innosetup -y --no-progress
 
       - name: Build installer
         shell: pwsh
         run: |
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\yImage.iss
+          $v = '${{ steps.ver.outputs.version }}'
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$v" installer\yImage.iss
 
-      - name: Upload installer artifact
+      - name: Build portable zip
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          $stage = "dist/yImage-$v-portable"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item target/release/yimage.exe $stage/
+          Copy-Item -Recurse assets/icons $stage/assets/icons
+          if (Test-Path assets/models) {
+            Copy-Item -Recurse assets/models $stage/assets/models
+          }
+          Copy-Item README.md, README.ko.md, README.ja.md, LICENSE, CHANGELOG.md $stage/
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/yImage-$v-portable-x64.zip" -CompressionLevel Optimal
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          $changelog = Get-Content CHANGELOG.md -Raw
+          # Pull the section between "## [<v>]" and the next "## [" heading.
+          $pattern = "(?ms)^##\s*\[$([regex]::Escape($v))\].*?(?=^##\s*\[|\z)"
+          $match = [regex]::Match($changelog, $pattern)
+          $notes = if ($match.Success) { $match.Value.Trim() } else { "Release v$v" }
+          # Emit as a multi-line output.
+          $delim = [System.Guid]::NewGuid().ToString()
+          "notes<<$delim" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $notes | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "$delim" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: yImage-Setup
-          path: installer/Output/*.exe
+          name: yImage-${{ steps.ver.outputs.version }}
+          path: |
+            installer/Output/*.exe
+            dist/*.zip
 
-      - name: Attach to GitHub Release
+      - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: installer/Output/*.exe
+          name: yImage v${{ steps.ver.outputs.version }}
+          body: ${{ steps.notes.outputs.notes }}
+          draft: false
+          prerelease: false
+          files: |
+            installer/Output/*.exe
+            dist/yImage-${{ steps.ver.outputs.version }}-portable-x64.zip

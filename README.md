@@ -84,6 +84,29 @@ iscc installer\yImage.iss
 | Screen capture | `windows-capture` |
 | i18n | `fluent` |
 
+## Releases
+
+Release artifacts (installer + portable zip) are built on GitHub Actions
+whenever a `v*` tag is pushed. See [`CHANGELOG.md`](CHANGELOG.md) for
+what's in each version.
+
+Cutting a new release:
+
+```bash
+# bumps Cargo.toml + installer/yImage.iss, lets you edit CHANGELOG.md,
+# commits, and tags. Does NOT push — the script prints the push command
+# so you get a final chance to review.
+./scripts/release.sh 0.2.0
+
+# or on Windows:
+# .\scripts\release.ps1 0.2.0
+```
+
+Once the `v0.2.0` tag is pushed, `.github/workflows/release.yml` builds
+the Windows installer and portable zip and attaches them to the GitHub
+Release created by the tag. Release notes are pulled from the matching
+`CHANGELOG.md` section.
+
 ## Support
 
 If yImage saves you time, please consider supporting development on Ko-fi:

@@ -5,7 +5,11 @@
 ; in the Windows 10/11 "Default apps" UI via RegisteredApplications.
 
 #define AppName "yImage"
-#define AppVersion "0.1.0"
+; AppVersion may be overridden from the command line:
+;   iscc /DAppVersion=0.2.0 installer\yImage.iss
+#ifndef AppVersion
+  #define AppVersion "0.2.0"
+#endif
 #define AppPublisher "Youngmin Kim"
 #define AppURL "https://ko-fi.com/youngminkim"
 #define AppExeName "yimage.exe"
