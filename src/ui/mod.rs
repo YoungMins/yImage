@@ -39,3 +39,30 @@ pub fn setup_fonts(ctx: &egui::Context) {
 
     ctx.set_fonts(fonts);
 }
+
+/// Build an `egui::ColorImage` from an `image::RgbaImage` using the fastest
+/// available path:
+///
+/// - **Opaque fast path**: when every alpha byte is 255, premultiplied and
+///   unmultiplied RGBA are bit-identical, so we reinterpret the raw byte
+///   buffer as `&[Color32]` and bulk-copy into the pixel vec. A 24 MP JPEG
+///   goes from ~24 M `from_rgba_unmultiplied` calls to a single `memcpy`.
+/// - **Alpha fallback**: if any pixel has partial alpha we premultiply pixel
+///   by pixel, same as before.
+pub(crate) fn rgba_to_color_image(img: &image::RgbaImage) -> egui::ColorImage {
+    let size = [img.width() as usize, img.height() as usize];
+    let raw: &[u8] = img.as_raw();
+    let opaque = !raw.chunks_exact(4).any(|c| c[3] != 255);
+    let pixels: Vec<egui::Color32> = if opaque {
+        bytemuck::cast_slice::<u8, egui::Color32>(raw).to_vec()
+    } else {
+        raw.chunks_exact(4)
+            .map(|c| egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
+            .collect()
+    };
+    egui::ColorImage {
+        size,
+        source_size: egui::vec2(size[0] as f32, size[1] as f32),
+        pixels,
+    }
+}

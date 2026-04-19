@@ -31,18 +31,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
 
         // Rebuild the texture if the document changed.
         if app.tabs[idx].texture_dirty || app.tabs[idx].texture.is_none() {
-            let doc = &app.tabs[idx].doc;
-            let size = [doc.width() as usize, doc.height() as usize];
-            let pixels: Vec<Color32> = doc
-                .image
-                .pixels()
-                .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
-                .collect();
-            let color_img = ColorImage {
-                size,
-                source_size: egui::vec2(size[0] as f32, size[1] as f32),
-                pixels,
-            };
+            let color_img = super::rgba_to_color_image(&app.tabs[idx].doc.image);
             let tex = ctx.load_texture(
                 format!("yimage_tab_{}", app.tabs[idx].id),
                 color_img,

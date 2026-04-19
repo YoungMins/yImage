@@ -2,15 +2,17 @@
 //
 // A horizontal strip of small tiles representing every image in the current
 // folder so the user can jump to siblings without a file picker. Thumbnails
-// are decoded lazily on rayon workers and cached in a HashMap keyed by path.
-// Toggled via View → Thumbnail Panel (default: off to give the canvas the full
-// viewport).
+// are decoded lazily on rayon workers and cached in a bounded LRU keyed by
+// path, so a folder with tens of thousands of images can't pin unbounded
+// GPU memory. Toggled via View → Thumbnail Panel (default: off).
 
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use egui::{Color32, ColorImage, CornerRadius, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
+use egui::{Color32, CornerRadius, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
+use lru::LruCache;
 use parking_lot::Mutex;
 
 use crate::app::YImageApp;
@@ -19,18 +21,26 @@ use crate::ui::theme;
 pub const THUMB_MAX_DIM: u32 = 96;
 const STRIP_HEIGHT: f32 = 92.0;
 const TILE_SIZE: f32 = 64.0;
+const CACHE_CAPACITY: usize = 256;
 
-#[derive(Default)]
 pub struct Thumbnails {
-    pub cache: Arc<Mutex<HashMap<PathBuf, TextureHandle>>>,
+    pub cache: Arc<Mutex<LruCache<PathBuf, TextureHandle>>>,
     pub pending: Arc<Mutex<HashMap<PathBuf, ()>>>,
     pub visible: bool,
+}
+
+impl Default for Thumbnails {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Thumbnails {
     pub fn new() -> Self {
         Self {
-            cache: Default::default(),
+            cache: Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(CACHE_CAPACITY).expect("cache capacity > 0"),
+            ))),
             pending: Default::default(),
             visible: false,
         }
@@ -163,8 +173,8 @@ pub(crate) fn ensure_thumbnail(
     path: &std::path::Path,
 ) -> Option<TextureHandle> {
     {
-        let cache = app.thumbs.cache.lock();
-        if let Some(t) = cache.get(path) {
+        let mut cache = app.thumbs.cache.lock();
+        if let Some(t) = cache.get(&path.to_path_buf()) {
             return Some(t.clone());
         }
     }
@@ -200,22 +210,13 @@ pub(crate) fn ensure_thumbnail(
                 return;
             }
         };
-        let size = [tw as usize, th as usize];
-        let pixels: Vec<Color32> = small
-            .pixels()
-            .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
-            .collect();
-        let color_image = ColorImage {
-            size,
-            source_size: egui::vec2(size[0] as f32, size[1] as f32),
-            pixels,
-        };
+        let color_image = crate::ui::rgba_to_color_image(&small);
         let tex = ctx_clone.load_texture(
             format!("thumb:{}", path_owned.display()),
             color_image,
             TextureOptions::LINEAR,
         );
-        cache.lock().insert(path_owned.clone(), tex);
+        cache.lock().put(path_owned.clone(), tex);
         pending.lock().remove(&path_owned);
         ctx_clone.request_repaint();
     });

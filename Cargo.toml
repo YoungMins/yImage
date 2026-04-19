@@ -87,6 +87,7 @@ directories = "5.0"
 # Misc
 log = "0.4"
 bytemuck = "1.16"
+lru = "0.12"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

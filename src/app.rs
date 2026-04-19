@@ -3,11 +3,13 @@
 // to push finished work back to the UI thread.
 
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crossbeam_channel::{Receiver, Sender};
 use eframe::CreationContext;
+use lru::LruCache;
 use parking_lot::Mutex;
 
 use crate::document::Document;
@@ -194,6 +196,10 @@ pub struct YImageApp {
     pub dialog: ui::dialogs::DialogState,
     pub folder_entries: Arc<Mutex<Vec<PathBuf>>>,
     pub folder_index: usize,
+    /// Tiny LRU of decoded sibling images, populated by the adjacent-file
+    /// prefetcher so arrow-key navigation skips the full decode. Bounded to
+    /// a handful of entries — each held `RgbaImage` can be tens of MB.
+    pub decoded_cache: Arc<Mutex<LruCache<PathBuf, image::RgbaImage>>>,
     pub pending_action: StartupAction,
     pub thumbs: ui::thumbnails::Thumbnails,
     pub downloads: DownloadManager,
@@ -237,6 +243,9 @@ impl YImageApp {
             dialog: ui::dialogs::DialogState::default(),
             folder_entries: Arc::new(Mutex::new(Vec::new())),
             folder_index: 0,
+            decoded_cache: Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(3).expect("prefetch cache capacity > 0"),
+            ))),
             pending_action: startup_action,
             thumbs,
             downloads: DownloadManager::default(),
@@ -467,6 +476,19 @@ impl YImageApp {
         let path = path.to_path_buf();
         self.settings.last_folder = path.parent().map(Path::to_path_buf);
         self.scan_folder(&path);
+
+        // Fast path: if the prefetcher already decoded this file, hand it to
+        // the UI without re-decoding. `pop` removes the entry so we don't
+        // keep a second 100 MB copy around.
+        if let Some(img) = self.decoded_cache.lock().pop(&path) {
+            let _ = tx.send(BgMsg::ImageLoaded {
+                path,
+                image: img,
+                new_tab,
+            });
+            return;
+        }
+
         rayon::spawn(move || match load_image(&path) {
             Ok(img) => {
                 let _ = tx.send(BgMsg::ImageLoaded {
@@ -479,6 +501,42 @@ impl YImageApp {
                 let _ = tx.send(BgMsg::Error(format!("{e:#}")));
             }
         });
+    }
+
+    /// Decode the previous and next sibling images in the background so
+    /// arrow-key / thumbnail navigation is instant. Skips entries that are
+    /// already cached.
+    fn prefetch_adjacent(&self) {
+        let entries = self.folder_entries.lock().clone();
+        if entries.len() <= 1 {
+            return;
+        }
+        let Some(current) = self.active_doc().and_then(|d| d.path.clone()) else {
+            return;
+        };
+        let Some(idx) = entries.iter().position(|e| e == &current) else {
+            return;
+        };
+        let len = entries.len() as isize;
+        for delta in [-1isize, 1] {
+            let n = ((idx as isize + delta).rem_euclid(len)) as usize;
+            let target = entries[n].clone();
+            if target == current {
+                continue;
+            }
+            if self.decoded_cache.lock().peek(&target).is_some() {
+                continue;
+            }
+            let cache = self.decoded_cache.clone();
+            rayon::spawn(move || {
+                if cache.lock().peek(&target).is_some() {
+                    return;
+                }
+                if let Ok(img) = load_image(&target) {
+                    cache.lock().put(target, img);
+                }
+            });
+        }
     }
 
     fn scan_folder(&self, current: &Path) {
@@ -707,6 +765,7 @@ impl YImageApp {
                     }
                     if !path.as_os_str().is_empty() {
                         self.push_recent(&path);
+                        self.prefetch_adjacent();
                     }
                     self.progress = None;
                     self.apply_pending_action();
