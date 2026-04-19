@@ -10,6 +10,8 @@ action-save-as = Save As...
 action-optimize = Optimize...
 action-resize = Resize...
 action-convert = Convert...
+action-export-ico = Export as ICO...
+action-export = Export
 action-gif = GIF Builder
 action-capture = Screen Capture
 action-set-default = Set as Default Image Viewer
@@ -43,6 +45,7 @@ tool-draw = Brush
 tool-mosaic = Mosaic
 tool-text = Text
 tool-shape = Shape
+tool-crop = Crop
 tool-bg-remove = Remove Background
 tool-obj-remove = Remove Object
 tool-gif = GIF Builder
@@ -105,6 +108,11 @@ resize-lock-aspect = Lock aspect ratio
 resize-filter = Filter
 
 convert-target = Target format
+
+crop-hint = Drag on the image to select a region, then click Apply.
+crop-clear = Clear
+
+ico-sizes-hint = Select which sizes to include in the .ico file.
 
 optimize-jpeg-quality = JPEG Quality
 optimize-png-level = PNG Optimization Level

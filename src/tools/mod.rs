@@ -16,6 +16,7 @@ pub enum ToolKind {
     Mosaic,
     Text,
     Shape,
+    Crop,
     BackgroundRemove,
     ObjectRemove,
     Gif,

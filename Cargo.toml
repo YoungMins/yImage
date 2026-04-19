@@ -35,6 +35,7 @@ image = { version = "0.25", features = [
     "tiff",
     "gif",
     "avif",
+    "ico",
 ] }
 fast_image_resize = "4.2"
 imageproc = "0.25"

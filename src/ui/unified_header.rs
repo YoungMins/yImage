@@ -87,6 +87,7 @@ pub fn show_ribbon(ctx: &egui::Context, app: &mut YImageApp) {
                     tool_btn(ui, app, ToolKind::Mosaic, "\u{25A3}", "tool-mosaic");
                     tool_btn(ui, app, ToolKind::Text, "T", "tool-text");
                     tool_btn(ui, app, ToolKind::Shape, "\u{25FB}", "tool-shape");
+                    tool_btn(ui, app, ToolKind::Crop, "\u{26F6}", "tool-crop");
                 });
 
                 group_separator(ui);
@@ -410,6 +411,19 @@ fn file_section(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
         .clicked()
     {
         app.dialog.convert_open = true;
+        ui.close_menu();
+    }
+    if ui
+        .add_enabled(
+            app.has_doc(),
+            egui::Button::new(format!(
+                "\u{1F5BC}  {}",
+                app.i18n.t("action-export-ico", &[])
+            )),
+        )
+        .clicked()
+    {
+        app.dialog.ico_open = true;
         ui.close_menu();
     }
     ui.separator();

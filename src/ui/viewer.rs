@@ -563,6 +563,34 @@ fn handle_tool_input(app: &mut YImageApp, response: &egui::Response, rect: Rect,
                 app.dialog.shape_start = None;
             }
         }
+        ToolKind::Crop => {
+            if response.drag_started_by(egui::PointerButton::Primary) {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    if let Some(img_pos) = screen_to_image(pos) {
+                        app.dialog.crop_start = Some(img_pos);
+                        // A fresh drag invalidates any previous confirmed rect.
+                        app.dialog.crop_rect = None;
+                    }
+                }
+            }
+            if response.drag_stopped_by(egui::PointerButton::Primary) {
+                if let (Some(start), Some(end)) = (
+                    app.dialog.crop_start,
+                    response.interact_pointer_pos().and_then(screen_to_image),
+                ) {
+                    let iw = app.tabs[idx].doc.width() as f32;
+                    let ih = app.tabs[idx].doc.height() as f32;
+                    let x0 = start.0.min(end.0).clamp(0.0, iw) as u32;
+                    let y0 = start.1.min(end.1).clamp(0.0, ih) as u32;
+                    let x1 = start.0.max(end.0).clamp(0.0, iw) as u32;
+                    let y1 = start.1.max(end.1).clamp(0.0, ih) as u32;
+                    if x1 > x0 && y1 > y0 {
+                        app.dialog.crop_rect = Some((x0, y0, x1 - x0, y1 - y0));
+                    }
+                }
+                app.dialog.crop_start = None;
+            }
+        }
         ToolKind::ObjectRemove => {
             if response.drag_started_by(egui::PointerButton::Primary) {
                 let (w, h) = (
@@ -683,6 +711,58 @@ fn draw_overlays(
                 egui::CornerRadius::ZERO,
                 Stroke::new(1.5, Color32::from_rgb(0x00, 0x78, 0xD4)),
                 egui::StrokeKind::Middle,
+            );
+        }
+    }
+
+    // Crop: dim outside the selection and outline the kept region.
+    if app.tool == ToolKind::Crop {
+        let scale_x = rect.width() / img_size.x.max(1.0);
+        let scale_y = rect.height() / img_size.y.max(1.0);
+        let sel_screen = if let (Some(start), Some(hover)) =
+            (app.dialog.crop_start, ctx.pointer_hover_pos())
+        {
+            // Live drag preview.
+            let start_screen =
+                rect.min + Vec2::new(start.0 * scale_x, start.1 * scale_y);
+            Some(Rect::from_two_pos(start_screen, hover).intersect(rect))
+        } else {
+            // Confirmed rectangle from the most recent drag.
+            app.dialog.crop_rect.map(|(x, y, w, h)| {
+                Rect::from_min_size(
+                    rect.min + Vec2::new(x as f32 * scale_x, y as f32 * scale_y),
+                    Vec2::new(w as f32 * scale_x, h as f32 * scale_y),
+                )
+            })
+        };
+        if let Some(sel) = sel_screen {
+            let dim = Color32::from_black_alpha(120);
+            let top = Rect::from_min_max(rect.min, egui::pos2(rect.max.x, sel.min.y));
+            let bottom = Rect::from_min_max(egui::pos2(rect.min.x, sel.max.y), rect.max);
+            let left = Rect::from_min_max(
+                egui::pos2(rect.min.x, sel.min.y),
+                egui::pos2(sel.min.x, sel.max.y),
+            );
+            let right = Rect::from_min_max(
+                egui::pos2(sel.max.x, sel.min.y),
+                egui::pos2(rect.max.x, sel.max.y),
+            );
+            for r in [top, bottom, left, right] {
+                if r.width() > 0.0 && r.height() > 0.0 {
+                    painter.rect_filled(r, egui::CornerRadius::ZERO, dim);
+                }
+            }
+            painter.rect_stroke(
+                sel,
+                egui::CornerRadius::ZERO,
+                Stroke::new(1.5, Color32::from_rgb(0x00, 0x78, 0xD4)),
+                egui::StrokeKind::Middle,
+            );
+            painter.rect_stroke(
+                sel,
+                egui::CornerRadius::ZERO,
+                Stroke::new(0.5, Color32::WHITE),
+                egui::StrokeKind::Inside,
             );
         }
     }

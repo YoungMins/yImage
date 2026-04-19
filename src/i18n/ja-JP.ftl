@@ -10,6 +10,8 @@ action-save-as = 名前を付けて保存...
 action-optimize = 容量の最適化...
 action-resize = サイズ変更...
 action-convert = フォーマット変換...
+action-export-ico = ICO ファイルに書き出す...
+action-export = 書き出す
 action-gif = GIF ビルダー
 action-capture = 画面キャプチャ
 action-set-default = 既定の画像ビューアーに設定
@@ -43,6 +45,7 @@ tool-draw = ブラシ
 tool-mosaic = モザイク
 tool-text = テキスト
 tool-shape = 図形
+tool-crop = 切り抜き
 tool-bg-remove = 背景削除
 tool-obj-remove = オブジェクト削除
 tool-gif = GIF ビルダー
@@ -105,6 +108,11 @@ resize-lock-aspect = 縦横比を固定
 resize-filter = フィルター
 
 convert-target = 出力フォーマット
+
+crop-hint = 画像上をドラッグして範囲を選び、適用を押します。
+crop-clear = 解除
+
+ico-sizes-hint = .ico ファイルに含めるサイズを選択します。
 
 optimize-jpeg-quality = JPEG 品質
 optimize-png-level = PNG 最適化レベル

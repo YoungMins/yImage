@@ -10,6 +10,8 @@ action-save-as = 다른 이름으로 저장...
 action-optimize = 용량 최적화...
 action-resize = 크기 조정...
 action-convert = 포맷 변환...
+action-export-ico = ICO 파일로 내보내기...
+action-export = 내보내기
 action-gif = GIF 빌더
 action-capture = 화면 캡처
 action-set-default = 기본 이미지 뷰어로 설정
@@ -43,6 +45,7 @@ tool-draw = 브러시
 tool-mosaic = 모자이크
 tool-text = 텍스트
 tool-shape = 도형
+tool-crop = 잘라내기
 tool-bg-remove = 배경 제거
 tool-obj-remove = 객체 제거
 tool-gif = GIF 빌더
@@ -105,6 +108,11 @@ resize-lock-aspect = 비율 고정
 resize-filter = 필터
 
 convert-target = 출력 포맷
+
+crop-hint = 이미지 위에서 드래그하여 영역을 선택한 뒤 적용을 누르세요.
+crop-clear = 해제
+
+ico-sizes-hint = .ico 파일에 포함할 크기를 선택하세요.
 
 optimize-jpeg-quality = JPEG 품질
 optimize-png-level = PNG 최적화 레벨

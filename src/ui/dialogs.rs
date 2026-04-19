@@ -47,6 +47,10 @@ pub struct DialogState {
     // Optimize
     pub optimize_open: bool,
 
+    // ICO export
+    pub ico_open: bool,
+    pub ico_sizes: [bool; 4],
+
     // Save as
     pub save_dialog_open: bool,
 
@@ -61,6 +65,10 @@ pub struct DialogState {
     pub text: TextState,
     pub shape: ShapeState,
     pub shape_start: Option<(f32, f32)>,
+    pub crop_start: Option<(f32, f32)>,
+    /// Confirmed crop rectangle in image coordinates (x, y, w, h).
+    /// Set when the user finishes a drag; cleared on Apply / Cancel.
+    pub crop_rect: Option<(u32, u32, u32, u32)>,
     pub obj_mask: Option<GrayImage>,
     pub obj_mask_tex: Option<egui::TextureHandle>,
 
@@ -109,6 +117,9 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
     }
     if app.dialog.optimize_open {
         optimize_dialog(ctx, app);
+    }
+    if app.dialog.ico_open {
+        ico_dialog(ctx, app);
     }
     if app.dialog.save_dialog_open {
         save_as_dialog(app);
@@ -246,7 +257,7 @@ fn convert_dialog(ctx: &egui::Context, app: &mut YImageApp) {
             ui.add_space(theme::SPACE_XS);
             // Format tiles laid out in a grid — click a tile to pick the
             // target format. Faster + more visual than a dropdown.
-            let formats = ["png", "jpg", "webp", "bmp", "tiff", "gif", "avif"];
+            let formats = ["png", "jpg", "webp", "bmp", "tiff", "gif", "avif", "ico"];
             egui::Grid::new("format_tiles")
                 .num_columns(4)
                 .spacing([theme::SPACE_SM, theme::SPACE_SM])
@@ -389,6 +400,92 @@ fn optimize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
             );
         }
         app.dialog.optimize_open = false;
+    }
+}
+
+/// Standard ICO resolutions. Modern Windows uses 256 for large-icon views; the
+/// older 16/32/48 set is still required for legacy surfaces like tray icons,
+/// taskbar, and file-explorer small-icon mode.
+const ICO_SIZES: [u32; 4] = [16, 32, 48, 256];
+
+fn ico_dialog(ctx: &egui::Context, app: &mut YImageApp) {
+    // If nothing is selected yet (fresh struct default), pre-check all sizes.
+    if app.dialog.ico_sizes.iter().all(|&b| !b) {
+        app.dialog.ico_sizes = [true; 4];
+    }
+    let mut open = app.dialog.ico_open;
+    let mut export = false;
+    egui::Window::new(app.i18n.t("action-export-ico", &[]))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .default_width(340.0)
+        .show(ctx, |ui| {
+            ui.add_space(theme::SPACE_XS);
+            ui.label(
+                RichText::new(app.i18n.t("ico-sizes-hint", &[]))
+                    .size(theme::FONT_CAPTION),
+            );
+            ui.add_space(theme::SPACE_SM);
+            for (i, size) in ICO_SIZES.iter().enumerate() {
+                ui.checkbox(
+                    &mut app.dialog.ico_sizes[i],
+                    format!("{size} × {size}"),
+                );
+            }
+            ui.add_space(theme::SPACE_MD);
+            let any_selected = app.dialog.ico_sizes.iter().any(|&b| b);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(
+                        any_selected,
+                        egui::Button::new(
+                            RichText::new(app.i18n.t("action-export", &[]))
+                                .size(13.0)
+                                .color(egui::Color32::WHITE),
+                        )
+                        .min_size(Vec2::new(110.0, 32.0))
+                        .fill(theme::ACCENT)
+                        .corner_radius(CornerRadius::same(8)),
+                    )
+                    .clicked()
+                {
+                    export = true;
+                }
+            });
+        });
+    app.dialog.ico_open = open;
+
+    if export {
+        let Some(doc) = app.active_doc() else { return };
+        let default_name = doc
+            .path
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .and_then(|s| s.to_str())
+            .unwrap_or("icon")
+            .to_string();
+        let sizes: Vec<u32> = ICO_SIZES
+            .iter()
+            .zip(app.dialog.ico_sizes.iter())
+            .filter_map(|(s, on)| if *on { Some(*s) } else { None })
+            .collect();
+        if let Some(out) = rfd::FileDialog::new()
+            .set_file_name(format!("{default_name}.ico"))
+            .add_filter("Windows Icon", &["ico"])
+            .save_file()
+        {
+            let image = doc.image.clone();
+            let tx = app.tx.clone();
+            rayon::spawn(move || {
+                if let Err(e) = crate::io::save::save_as_ico(&image, &out, &sizes) {
+                    let _ = tx.send(BgMsg::Error(format!("{e:#}")));
+                } else {
+                    let _ = tx.send(BgMsg::ImageSaved(out));
+                }
+            });
+        }
+        app.dialog.ico_open = false;
     }
 }
 

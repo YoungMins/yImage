@@ -29,6 +29,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                     ToolKind::Mosaic => mosaic_controls(ui, app),
                     ToolKind::Text => text_controls(ui, app),
                     ToolKind::Shape => shape_controls(ui, app),
+                    ToolKind::Crop => crop_controls(ui, app),
                     ToolKind::BackgroundRemove => bg_remove_controls(ui, app),
                     ToolKind::ObjectRemove => obj_remove_controls(ui, app),
                     ToolKind::Gif => gif_controls(ui, app),
@@ -142,6 +143,65 @@ fn shape_controls(ui: &mut egui::Ui, app: &mut YImageApp) {
         100.0,
     );
     color_swatch(ui, &mut app.dialog.shape.color);
+}
+
+fn crop_controls(ui: &mut egui::Ui, app: &mut YImageApp) {
+    if let Some((_, _, w, h)) = app.dialog.crop_rect {
+        ui.label(
+            RichText::new(format!("{w} × {h}"))
+                .size(theme::FONT_CAPTION)
+                .monospace()
+                .color(Color32::from_gray(180)),
+        );
+    }
+    let has_rect = app.dialog.crop_rect.is_some();
+    if ui
+        .add_enabled(
+            has_rect && app.has_doc(),
+            egui::Button::new(format!("\u{2702} {}", app.i18n.t("action-apply", &[])))
+                .fill(theme::ACCENT)
+                .corner_radius(CornerRadius::same(8)),
+        )
+        .clicked()
+    {
+        apply_crop(app);
+    }
+    if ui
+        .add_enabled(
+            has_rect,
+            egui::Button::new(app.i18n.t("crop-clear", &[])),
+        )
+        .clicked()
+    {
+        app.dialog.crop_rect = None;
+        app.dialog.crop_start = None;
+    }
+    hint(ui, &app.i18n.t("crop-hint", &[]), app.settings.theme_dark);
+}
+
+fn apply_crop(app: &mut YImageApp) {
+    let Some((x, y, w, h)) = app.dialog.crop_rect else {
+        return;
+    };
+    let idx = app.active_tab;
+    let Some(tab) = app.tabs.get_mut(idx) else {
+        return;
+    };
+    let (iw, ih) = (tab.doc.width(), tab.doc.height());
+    // Final clamp in case the document changed since the rect was captured.
+    let x2 = x.saturating_add(w).min(iw);
+    let y2 = y.saturating_add(h).min(ih);
+    if x >= iw || y >= ih || x2 <= x || y2 <= y {
+        app.dialog.crop_rect = None;
+        return;
+    }
+    let cropped =
+        image::imageops::crop_imm(&tab.doc.image, x, y, x2 - x, y2 - y).to_image();
+    tab.doc.replace(cropped);
+    tab.texture_dirty = true;
+    tab.viewer.reset_view = true;
+    app.dialog.crop_rect = None;
+    app.dialog.crop_start = None;
 }
 
 fn bg_remove_controls(ui: &mut egui::Ui, app: &mut YImageApp) {
