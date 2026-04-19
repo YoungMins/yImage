@@ -103,9 +103,24 @@ pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
     );
 }
 
-/// Apply an Apple-inspired dark theme.
-pub fn apply_dark(ctx: &egui::Context) {
-    let mut style = Style::default();
+/// One-time spacing/typography setup. Theme toggles must not touch spacing
+/// — otherwise the layout subtly shifts between light and dark, which is
+/// exactly the kind of side-effect we want to avoid. This is called once at
+/// startup; the per-theme functions only replace `style.visuals` on top of
+/// whatever spacing is already installed.
+fn apply_spacing(style: &mut Style) {
+    style.spacing.item_spacing = Vec2::new(10.0, 8.0);
+    style.spacing.button_padding = Vec2::new(14.0, 7.0);
+    style.spacing.menu_margin = Margin::symmetric(8, 6);
+    style.spacing.window_margin = Margin::same(14);
+    style.spacing.indent = 20.0;
+    style.spacing.slider_width = 180.0;
+    style.spacing.interact_size = Vec2::new(36.0, 30.0);
+    style.spacing.icon_width = 16.0;
+    style.spacing.icon_spacing = 6.0;
+}
+
+fn build_dark_visuals() -> Visuals {
     let mut v = Visuals::dark();
 
     // macOS dark window palette. Content surfaces sit slightly above the
@@ -175,24 +190,19 @@ pub fn apply_dark(ctx: &egui::Context) {
     };
     v.hyperlink_color = ACCENT_HOVER;
 
-    // Apple spacing: airy, consistent 10–12px gutters.
-    style.spacing.item_spacing = Vec2::new(10.0, 8.0);
-    style.spacing.button_padding = Vec2::new(14.0, 7.0);
-    style.spacing.menu_margin = Margin::symmetric(8, 6);
-    style.spacing.window_margin = Margin::same(14);
-    style.spacing.indent = 20.0;
-    style.spacing.slider_width = 180.0;
-    style.spacing.interact_size = Vec2::new(36.0, 30.0);
-    style.spacing.icon_width = 16.0;
-    style.spacing.icon_spacing = 6.0;
+    v
+}
 
-    style.visuals = v;
+/// Apply an Apple-inspired dark theme — replaces only the visuals so the
+/// previously installed spacing stays put across theme toggles.
+pub fn apply_dark(ctx: &egui::Context) {
+    let mut style = (*ctx.style()).clone();
+    apply_spacing(&mut style);
+    style.visuals = build_dark_visuals();
     ctx.set_style(style);
 }
 
-/// Apply an Apple-inspired light theme (macOS Ventura / Sonoma feel).
-pub fn apply_light(ctx: &egui::Context) {
-    let mut style = Style::default();
+fn build_light_visuals() -> Visuals {
     let mut v = Visuals::light();
 
     // macOS light palette — soft whites with a warm-grey undertone.
@@ -256,16 +266,15 @@ pub fn apply_light(ctx: &egui::Context) {
     };
     v.hyperlink_color = Color32::from_rgb(0x00, 0x7A, 0xFF);
 
-    style.spacing.item_spacing = Vec2::new(10.0, 8.0);
-    style.spacing.button_padding = Vec2::new(14.0, 7.0);
-    style.spacing.menu_margin = Margin::symmetric(8, 6);
-    style.spacing.window_margin = Margin::same(14);
-    style.spacing.indent = 20.0;
-    style.spacing.slider_width = 180.0;
-    style.spacing.interact_size = Vec2::new(36.0, 30.0);
-    style.spacing.icon_width = 16.0;
-    style.spacing.icon_spacing = 6.0;
+    v
+}
 
-    style.visuals = v;
+/// Apply an Apple-inspired light theme (macOS Ventura / Sonoma feel).
+/// Like `apply_dark`, only touches visuals so spacing is frozen across
+/// theme toggles.
+pub fn apply_light(ctx: &egui::Context) {
+    let mut style = (*ctx.style()).clone();
+    apply_spacing(&mut style);
+    style.visuals = build_light_visuals();
     ctx.set_style(style);
 }
