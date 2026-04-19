@@ -33,6 +33,18 @@ fn panel_frame(ctx: &egui::Context) -> egui::Frame {
         .stroke(egui::Stroke::NONE)
 }
 
+fn ribbon_frame(ctx: &egui::Context) -> egui::Frame {
+    let dark = ctx.style().visuals.dark_mode;
+    let fill = if dark {
+        Color32::from_rgb(0x24, 0x24, 0x26)
+    } else {
+        Color32::from_rgb(0xED, 0xED, 0xEF)
+    };
+    egui::Frame::none()
+        .fill(fill)
+        .stroke(egui::Stroke::NONE)
+}
+
 pub fn show_tab_bar(ctx: &egui::Context, app: &mut YImageApp) {
     egui::TopBottomPanel::top("tab_bar")
         .exact_height(TAB_BAR_HEIGHT)
@@ -59,7 +71,7 @@ pub fn show_tab_bar(ctx: &egui::Context, app: &mut YImageApp) {
 pub fn show_ribbon(ctx: &egui::Context, app: &mut YImageApp) {
     egui::TopBottomPanel::top("ribbon_toolbar")
         .exact_height(RIBBON_HEIGHT)
-        .frame(panel_frame(ctx))
+        .frame(ribbon_frame(ctx))
         .show_separator_line(false)
         .show(ctx, |ui| {
             ui.add_space(2.0);
