@@ -71,10 +71,21 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
                             let is_current = current_path.as_ref() == Some(entry);
                             let tex = ensure_thumbnail(ctx, app, entry);
 
-                            let (rect, resp) = ui.allocate_exact_size(
+                            let (alloc_rect, resp) = ui.allocate_exact_size(
                                 Vec2::splat(TILE_SIZE + 6.0),
                                 Sense::click(),
                             );
+
+                            // Subtle scale-up on hover — animated so the tile
+                            // doesn't jump as the pointer enters/leaves.
+                            let hover_id = ui.id().with(("thumb_hover", entry));
+                            let hover_t = ctx.animate_bool_with_time(
+                                hover_id,
+                                resp.hovered(),
+                                0.12,
+                            );
+                            let grow = 2.0 * hover_t;
+                            let rect = alloc_rect.expand(grow);
 
                             // Highlight the active tile with an accent frame.
                             let stroke = if is_current {

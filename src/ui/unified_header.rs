@@ -162,7 +162,8 @@ fn tabs_zone(ui: &mut egui::Ui, app: &mut YImageApp) {
             .corner_radius(CornerRadius::same(8))
             .fill(fill);
 
-        frame.show(ui, |ui| {
+        let tab_id = ui.id().with(("tab_hover", i));
+        let inner = frame.show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
 
@@ -179,12 +180,18 @@ fn tabs_zone(ui: &mut egui::Ui, app: &mut YImageApp) {
                     switch_to = Some(i);
                 }
 
-                // Close button — separate clickable widget.
+                // Close button fades in when the tab is hovered or active, so
+                // resting tabs stay visually quiet.
+                let hovered = ui
+                    .ctx()
+                    .animate_bool_with_time(tab_id, false, 0.12);
+                let opacity = if is_active { 1.0 } else { hovered.max(0.15) };
+                let base = ui.visuals().text_color();
                 let x_resp = ui.add(
                     egui::Button::new(
                         RichText::new("\u{00D7}")
                             .size(13.0)
-                            .color(ui.visuals().text_color().linear_multiply(0.5)),
+                            .color(base.linear_multiply(0.35 + 0.4 * opacity)),
                     )
                     .frame(false)
                     .min_size(Vec2::new(18.0, 18.0)),
@@ -194,6 +201,10 @@ fn tabs_zone(ui: &mut egui::Ui, app: &mut YImageApp) {
                 }
             });
         });
+
+        let any_hovered = inner.response.hovered()
+            || inner.response.contains_pointer();
+        ui.ctx().animate_bool_with_time(tab_id, any_hovered, 0.12);
     }
 
     if let Some(idx) = close_idx {
@@ -246,6 +257,42 @@ fn tool_btn(
 
 // ── Menu ───────────────────────────────────────────────────────────
 
+/// Render a menu row: primary label on the left, right-aligned keyboard
+/// shortcut hint rendered in a dim monospace. Returns the button's Response
+/// so callers can check `.clicked()`.
+fn menu_row(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    label: &str,
+    shortcut: &str,
+) -> egui::Response {
+    let row = ui.add_enabled_ui(enabled, |ui| {
+        ui.horizontal(|ui| {
+            ui.set_min_width(220.0);
+            let resp = ui.add(
+                egui::Button::new(RichText::new(label).size(theme::FONT_BODY))
+                    .frame(false)
+                    .min_size(Vec2::new(160.0, 22.0)),
+            );
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    let color = ui.visuals().text_color().linear_multiply(0.45);
+                    ui.label(
+                        RichText::new(shortcut)
+                            .size(theme::FONT_TINY)
+                            .monospace()
+                            .color(color),
+                    );
+                },
+            );
+            resp
+        })
+        .inner
+    });
+    row.inner
+}
+
 fn menu_button(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
     let menu_resp = ui.menu_button(
         RichText::new("\u{2630}").size(16.0),
@@ -266,8 +313,7 @@ fn menu_button(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
 }
 
 fn file_section(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
-    if ui
-        .button(format!("\u{1F4C2}  {}", app.i18n.t("action-open", &[])))
+    if menu_row(ui, true, &format!("\u{1F4C2}  {}", app.i18n.t("action-open", &[])), "Ctrl+O")
         .clicked()
     {
         if let Some(p) = rfd::FileDialog::new()
@@ -283,28 +329,24 @@ fn file_section(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
         }
         ui.close_menu();
     }
-    if ui
-        .add_enabled(
-            app.has_doc(),
-            egui::Button::new(format!(
-                "\u{1F4BE}  {}",
-                app.i18n.t("action-save", &[])
-            )),
-        )
-        .clicked()
+    if menu_row(
+        ui,
+        app.has_doc(),
+        &format!("\u{1F4BE}  {}", app.i18n.t("action-save", &[])),
+        "Ctrl+S",
+    )
+    .clicked()
     {
         app.save_current();
         ui.close_menu();
     }
-    if ui
-        .add_enabled(
-            app.has_doc(),
-            egui::Button::new(format!(
-                "\u{1F4BE}  {}",
-                app.i18n.t("action-save-as", &[])
-            )),
-        )
-        .clicked()
+    if menu_row(
+        ui,
+        app.has_doc(),
+        &format!("\u{1F4BE}  {}", app.i18n.t("action-save-as", &[])),
+        "Ctrl+Shift+S",
+    )
+    .clicked()
     {
         app.dialog.save_dialog_open = true;
         ui.close_menu();
@@ -447,10 +489,7 @@ fn file_section(ctx: &egui::Context, ui: &mut egui::Ui, app: &mut YImageApp) {
 }
 
 fn edit_section(ui: &mut egui::Ui, app: &mut YImageApp) {
-    if ui
-        .button(format!("{}  {}", app.i18n.t("action-undo", &[]), "Ctrl+Z"))
-        .clicked()
-    {
+    if menu_row(ui, true, &app.i18n.t("action-undo", &[]), "Ctrl+Z").clicked() {
         if let Some(tab) = app.active_tab_mut() {
             if tab.doc.undo() {
                 tab.texture_dirty = true;
@@ -458,10 +497,7 @@ fn edit_section(ui: &mut egui::Ui, app: &mut YImageApp) {
         }
         ui.close_menu();
     }
-    if ui
-        .button(format!("{}  {}", app.i18n.t("action-redo", &[]), "Ctrl+Shift+Z"))
-        .clicked()
-    {
+    if menu_row(ui, true, &app.i18n.t("action-redo", &[]), "Ctrl+Shift+Z").clicked() {
         if let Some(tab) = app.active_tab_mut() {
             if tab.doc.redo() {
                 tab.texture_dirty = true;
