@@ -547,6 +547,7 @@ impl YImageApp {
         let Some(dir) = current.parent() else { return };
         let dir = dir.to_path_buf();
         let entries = self.folder_entries.clone();
+        let thumbs_visible = self.thumbs.visible;
         rayon::spawn(move || {
             let mut files: Vec<PathBuf> = match std::fs::read_dir(&dir) {
                 Ok(rd) => rd
@@ -557,7 +558,36 @@ impl YImageApp {
                 Err(_) => return,
             };
             files.sort();
+            let preheat: Vec<PathBuf> = if thumbs_visible {
+                files.iter().take(64).cloned().collect()
+            } else {
+                Vec::new()
+            };
             *entries.lock() = files;
+
+            for path in preheat {
+                rayon::spawn(move || {
+                    if ui::thumbnails::disk_cache_key(&path).map_or(false, |k| k.exists()) {
+                        return;
+                    }
+                    let Ok(img) = crate::io::load::load_image(&path) else {
+                        return;
+                    };
+                    let (tw, th) = ui::thumbnails::fit_within(
+                        img.width(),
+                        img.height(),
+                        ui::thumbnails::THUMB_MAX_DIM,
+                    );
+                    if let Ok(small) = crate::ops::resize::resize_rgba(
+                        &img,
+                        tw,
+                        th,
+                        crate::ops::resize::Filter::Bilinear,
+                    ) {
+                        ui::thumbnails::save_disk_thumb(&path, &small);
+                    }
+                });
+            }
         });
     }
 
@@ -766,6 +796,35 @@ impl YImageApp {
                     if !path.as_os_str().is_empty() {
                         self.push_recent(&path);
                         self.prefetch_adjacent();
+                        // Reuse the just-decoded image to produce the filmstrip
+                        // thumbnail, avoiding a redundant decode in ensure_thumbnail.
+                        if let Some(tab) = self.tabs.get(self.active_tab) {
+                            let img = &tab.doc.image;
+                            let (tw, th) = ui::thumbnails::fit_within(
+                                img.width(),
+                                img.height(),
+                                ui::thumbnails::THUMB_MAX_DIM,
+                            );
+                            if let Ok(small) = crate::ops::resize::resize_rgba(
+                                img,
+                                tw,
+                                th,
+                                crate::ops::resize::Filter::Bilinear,
+                            ) {
+                                let color_image = ui::rgba_to_color_image(&small);
+                                let tex = ctx.load_texture(
+                                    format!("thumb:{}", path.display()),
+                                    color_image,
+                                    egui::TextureOptions::LINEAR,
+                                );
+                                self.thumbs.cache.lock().put(path.clone(), tex);
+                                self.thumbs.pending.lock().remove(&path);
+                                let p = path.clone();
+                                rayon::spawn(move || {
+                                    ui::thumbnails::save_disk_thumb(&p, &small);
+                                });
+                            }
+                        }
                     }
                     self.progress = None;
                     self.apply_pending_action();
@@ -825,13 +884,21 @@ impl eframe::App for YImageApp {
         #[cfg(all(windows, feature = "capture"))]
         self.poll_hotkeys();
 
-        let dropped_path: Option<PathBuf> =
-            ctx.input(|i| i.raw.dropped_files.first().and_then(|f| f.path.clone()));
-        if let Some(path) = dropped_path {
-            let _ = self
-                .tx
-                .send(BgMsg::Info(format!("opening {}", path.display())));
-            self.open_path(&path, true);
+        let dropped_files: Vec<PathBuf> =
+            ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
+        if !dropped_files.is_empty() {
+            if dropped_files.len() == 1 {
+                let _ = self
+                    .tx
+                    .send(BgMsg::Info(format!("opening {}", dropped_files[0].display())));
+            } else {
+                let _ = self
+                    .tx
+                    .send(BgMsg::Info(format!("opening {} files", dropped_files.len())));
+            }
+            for path in &dropped_files {
+                self.open_path(path, true);
+            }
         }
 
         // Declaration order matters for egui panel layout. New minimal stack:

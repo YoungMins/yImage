@@ -7,11 +7,13 @@
 // GPU memory. Toggled via View → Thumbnail Panel (default: off).
 
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use egui::{Color32, CornerRadius, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
+use image::RgbaImage;
 use lru::LruCache;
 use parking_lot::Mutex;
 
@@ -22,6 +24,38 @@ pub const THUMB_MAX_DIM: u32 = 96;
 const STRIP_HEIGHT: f32 = 92.0;
 const TILE_SIZE: f32 = 64.0;
 const CACHE_CAPACITY: usize = 256;
+
+// ── Disk thumbnail cache ──────────────────────────────────────────
+
+fn disk_cache_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "yimage").map(|d| d.cache_dir().join("thumbs"))
+}
+
+pub(crate) fn disk_cache_key(path: &Path) -> Option<PathBuf> {
+    let dir = disk_cache_dir()?;
+    let mtime = std::fs::metadata(path).ok()?.modified().ok()?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hasher);
+    mtime.hash(&mut hasher);
+    Some(dir.join(format!("{:016x}.png", hasher.finish())))
+}
+
+fn load_disk_thumb(path: &Path) -> Option<RgbaImage> {
+    let key = disk_cache_key(path)?;
+    if !key.exists() {
+        return None;
+    }
+    image::open(&key).ok().map(|d| d.to_rgba8())
+}
+
+pub(crate) fn save_disk_thumb(file_path: &Path, thumb: &RgbaImage) {
+    if let Some(key) = disk_cache_key(file_path) {
+        if let Some(parent) = key.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = thumb.save(&key);
+    }
+}
 
 pub struct Thumbnails {
     pub cache: Arc<Mutex<LruCache<PathBuf, TextureHandle>>>,
@@ -193,21 +227,29 @@ pub(crate) fn ensure_thumbnail(
     let path_owned = path.to_path_buf();
 
     rayon::spawn(move || {
-        let Ok(img) = crate::io::load::load_image(&path_owned) else {
-            pending.lock().remove(&path_owned);
-            return;
-        };
-        let (tw, th) = fit_within(img.width(), img.height(), THUMB_MAX_DIM);
-        let small = match crate::ops::resize::resize_rgba(
-            &img,
-            tw,
-            th,
-            crate::ops::resize::Filter::Bilinear,
-        ) {
-            Ok(s) => s,
-            Err(_) => {
+        // Try the disk cache first (much cheaper than a full decode).
+        let small = if let Some(cached) = load_disk_thumb(&path_owned) {
+            cached
+        } else {
+            let Ok(img) = crate::io::load::load_image(&path_owned) else {
                 pending.lock().remove(&path_owned);
                 return;
+            };
+            let (tw, th) = fit_within(img.width(), img.height(), THUMB_MAX_DIM);
+            match crate::ops::resize::resize_rgba(
+                &img,
+                tw,
+                th,
+                crate::ops::resize::Filter::Bilinear,
+            ) {
+                Ok(s) => {
+                    save_disk_thumb(&path_owned, &s);
+                    s
+                }
+                Err(_) => {
+                    pending.lock().remove(&path_owned);
+                    return;
+                }
             }
         };
         let color_image = crate::ui::rgba_to_color_image(&small);
@@ -224,7 +266,7 @@ pub(crate) fn ensure_thumbnail(
     None
 }
 
-fn fit_within(w: u32, h: u32, max_dim: u32) -> (u32, u32) {
+pub(crate) fn fit_within(w: u32, h: u32, max_dim: u32) -> (u32, u32) {
     if w <= max_dim && h <= max_dim {
         return (w.max(1), h.max(1));
     }

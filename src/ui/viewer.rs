@@ -31,7 +31,23 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
 
         // Rebuild the texture if the document changed.
         if app.tabs[idx].texture_dirty || app.tabs[idx].texture.is_none() {
-            let color_img = super::rgba_to_color_image(&app.tabs[idx].doc.image);
+            let img = &app.tabs[idx].doc.image;
+            let color_img = if img.width().max(img.height()) > 8192 {
+                let scale = 8192.0 / img.width().max(img.height()) as f32;
+                let dw = (img.width() as f32 * scale).max(1.0) as u32;
+                let dh = (img.height() as f32 * scale).max(1.0) as u32;
+                match crate::ops::resize::resize_rgba(
+                    img,
+                    dw,
+                    dh,
+                    crate::ops::resize::Filter::Bilinear,
+                ) {
+                    Ok(small) => super::rgba_to_color_image(&small),
+                    Err(_) => super::rgba_to_color_image(img),
+                }
+            } else {
+                super::rgba_to_color_image(img)
+            };
             let tex = ctx.load_texture(
                 format!("yimage_tab_{}", app.tabs[idx].id),
                 color_img,

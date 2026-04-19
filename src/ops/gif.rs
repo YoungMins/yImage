@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use color_quant::NeuQuant;
 use gif::{Encoder, Frame, Repeat};
 use image::RgbaImage;
+use rayon::prelude::*;
 
 use crate::io::load::load_image;
 use crate::ops::resize::{resize_rgba, Filter};
@@ -55,6 +56,22 @@ pub fn build_gif(frames: &[RgbaImage], out_path: &Path, opts: &GifOptions) -> Re
         }
     };
 
+    let delay = (opts.delay_ms / 10).max(1);
+
+    let processed: Vec<Result<Frame<'static>>> = frames
+        .par_iter()
+        .map(|frame| {
+            let resized = if frame.width() != w || frame.height() != h {
+                resize_rgba(frame, w, h, Filter::Lanczos3)?
+            } else {
+                frame.clone()
+            };
+            let mut f = quantise_frame(&resized);
+            f.delay = delay;
+            Ok(f)
+        })
+        .collect();
+
     let file = File::create(out_path).with_context(|| format!("create {}", out_path.display()))?;
     let mut encoder = Encoder::new(file, w as u16, h as u16, &[]).context("create gif encoder")?;
     encoder
@@ -64,17 +81,10 @@ pub fn build_gif(frames: &[RgbaImage], out_path: &Path, opts: &GifOptions) -> Re
         })
         .context("set repeat")?;
 
-    let delay = (opts.delay_ms / 10).max(1); // 1/100ths of a second
-
-    for frame in frames {
-        let resized = if frame.width() != w || frame.height() != h {
-            resize_rgba(frame, w, h, Filter::Lanczos3)?
-        } else {
-            frame.clone()
-        };
-        let mut f = quantise_frame(&resized);
-        f.delay = delay;
-        encoder.write_frame(&f).context("write gif frame")?;
+    for frame_result in processed {
+        encoder
+            .write_frame(&frame_result?)
+            .context("write gif frame")?;
     }
 
     Ok(())
