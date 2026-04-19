@@ -103,12 +103,10 @@ pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
     );
 }
 
-/// Build the full Style from scratch: default egui style + our Apple
-/// spacing + the requested visuals. Used on startup so every field is in a
-/// known state. Theme toggles must not go through this — they only swap
-/// `visuals` via `style_mut` so no other field (spacing, text styles,
-/// animation times, etc.) can ever drift between light and dark.
-fn build_style(dark: bool) -> Style {
+/// Build a full Style with our Apple spacing + the given visuals. egui 0.34
+/// keeps separate styles for dark and light mode (Options::dark_style /
+/// light_style), so we build one of these for each theme at install time.
+fn build_style_with(visuals: Visuals) -> Style {
     let mut style = Style::default();
     style.spacing.item_spacing = Vec2::new(10.0, 8.0);
     style.spacing.button_padding = Vec2::new(14.0, 7.0);
@@ -119,17 +117,23 @@ fn build_style(dark: bool) -> Style {
     style.spacing.interact_size = Vec2::new(36.0, 30.0);
     style.spacing.icon_width = 16.0;
     style.spacing.icon_spacing = 6.0;
-    style.visuals = if dark {
-        build_dark_visuals()
-    } else {
-        build_light_visuals()
-    };
+    style.visuals = visuals;
     style
 }
 
-/// Install the full theme, including spacing. Call at startup only.
+/// Install the full theme. Populates BOTH of egui's theme slots
+/// (`dark_style` and `light_style`) so that switching between them at
+/// runtime always picks up our spacing + visuals — not egui's raw
+/// defaults. Then pins the active theme to the user's saved preference so
+/// the OS-level "follow system" fallback can't silently override it.
 pub fn install(ctx: &egui::Context, dark: bool) {
-    ctx.set_style(build_style(dark));
+    ctx.set_style_of(egui::Theme::Dark, build_style_with(build_dark_visuals()));
+    ctx.set_style_of(egui::Theme::Light, build_style_with(build_light_visuals()));
+    ctx.set_theme(if dark {
+        egui::ThemePreference::Dark
+    } else {
+        egui::ThemePreference::Light
+    });
 }
 
 fn build_dark_visuals() -> Visuals {
@@ -205,11 +209,12 @@ fn build_dark_visuals() -> Visuals {
     v
 }
 
-/// Swap to the dark theme at runtime. Only `visuals` is replaced —
-/// spacing, typography, and every other Style field stay exactly as they
-/// were installed, so toggling never shifts the layout.
+/// Swap to the dark theme at runtime. Both dark_style and light_style were
+/// pre-populated by `install`, so flipping the theme preference is all that
+/// is needed — no Style mutation, no spacing shift, nothing but a visuals
+/// switch egui already has primed.
 pub fn apply_dark(ctx: &egui::Context) {
-    ctx.style_mut(|s| s.visuals = build_dark_visuals());
+    ctx.set_theme(egui::ThemePreference::Dark);
 }
 
 fn build_light_visuals() -> Visuals {
@@ -279,8 +284,7 @@ fn build_light_visuals() -> Visuals {
     v
 }
 
-/// Swap to the light theme at runtime. Companion to `apply_dark` — only
-/// the visuals change.
+/// Swap to the light theme at runtime. Companion to `apply_dark`.
 pub fn apply_light(ctx: &egui::Context) {
-    ctx.style_mut(|s| s.visuals = build_light_visuals());
+    ctx.set_theme(egui::ThemePreference::Light);
 }
