@@ -66,6 +66,11 @@ prop-modified = 수정 일시
 prop-path = 경로
 
 welcome-open = 이미지를 열거나 창에 끌어다 놓으세요.
+welcome-tagline = 이미지 뷰어 & 편집기
+welcome-recent = 최근 파일
+welcome-shortcut-hint = Ctrl+O 로 열기
+header-menu = 메뉴
+filmstrip-toggle = 필름스트립 보기
 status-loaded = 불러옴: { $path }
 status-saved = 저장됨: { $path }
 status-capturing = 캡처 중...

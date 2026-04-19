@@ -1,14 +1,12 @@
 #[cfg(all(windows, feature = "capture"))]
 pub mod capture_overlay;
+pub mod context_toolbar;
 pub mod dialogs;
-pub mod tabbar;
 pub mod gif_timeline;
-pub mod sidebar;
 pub mod statusbar;
 pub mod theme;
 pub mod thumbnails;
-pub mod toolbar;
-pub mod toolpanel;
+pub mod unified_header;
 pub mod viewer;
 
 // Noto Sans CJK JP (Regular) is embedded directly into the binary so the

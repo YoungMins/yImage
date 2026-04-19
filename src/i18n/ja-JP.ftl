@@ -66,6 +66,11 @@ prop-modified = 更新日時
 prop-path = パス
 
 welcome-open = 画像を開くか、ウィンドウにドロップしてください。
+welcome-tagline = 画像ビューアー & エディター
+welcome-recent = 最近使ったファイル
+welcome-shortcut-hint = Ctrl+O で開く
+header-menu = メニュー
+filmstrip-toggle = フィルムストリップを表示
 status-loaded = 読み込み完了: { $path }
 status-saved = 保存しました: { $path }
 status-capturing = キャプチャ中...

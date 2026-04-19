@@ -14,6 +14,22 @@ use crate::tools::{
     mosaic::MosaicState,
 };
 use crate::ui::gif_timeline::GifTimelineState;
+use crate::ui::theme;
+use egui::{CornerRadius, RichText, Vec2};
+
+/// Primary CTA button — accent-filled pill that stands out inside a dialog.
+fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(
+            RichText::new(label)
+                .size(13.0)
+                .color(egui::Color32::WHITE),
+        )
+        .min_size(Vec2::new(110.0, 32.0))
+        .fill(theme::ACCENT)
+        .corner_radius(CornerRadius::same(8)),
+    )
+}
 
 #[derive(Default)]
 pub struct DialogState {
@@ -121,25 +137,39 @@ fn resize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
+        .default_width(340.0)
         .show(ctx, |ui| {
+            ui.add_space(theme::SPACE_XS);
             ui.horizontal(|ui| {
-                ui.label("W");
-                let r = ui.add(egui::DragValue::new(&mut app.dialog.resize_w).range(1..=65535));
+                ui.spacing_mut().item_spacing.x = theme::SPACE_SM;
+                ui.label(RichText::new("W").size(theme::FONT_CAPTION));
+                let r = ui.add(
+                    egui::DragValue::new(&mut app.dialog.resize_w)
+                        .range(1..=65535)
+                        .speed(1.0),
+                );
                 if r.changed() && app.dialog.resize_keep_aspect {
                     let (_, h) = aspect_fit(src_w, src_h, app.dialog.resize_w, 0);
                     app.dialog.resize_h = h;
                 }
-                ui.label("H");
-                let r = ui.add(egui::DragValue::new(&mut app.dialog.resize_h).range(1..=65535));
+                ui.label(if app.dialog.resize_keep_aspect { "\u{1F517}" } else { "\u{2715}" });
+                ui.label(RichText::new("H").size(theme::FONT_CAPTION));
+                let r = ui.add(
+                    egui::DragValue::new(&mut app.dialog.resize_h)
+                        .range(1..=65535)
+                        .speed(1.0),
+                );
                 if r.changed() && app.dialog.resize_keep_aspect {
                     let (w, _) = aspect_fit(src_w, src_h, 0, app.dialog.resize_h);
                     app.dialog.resize_w = w;
                 }
             });
+            ui.add_space(theme::SPACE_SM);
             ui.checkbox(
                 &mut app.dialog.resize_keep_aspect,
                 app.i18n.t("resize-lock-aspect", &[]),
             );
+            ui.add_space(theme::SPACE_SM);
             egui::ComboBox::from_label(app.i18n.t("resize-filter", &[]))
                 .selected_text(format!("{:?}", app.dialog.resize_filter))
                 .show_ui(ui, |ui| {
@@ -159,9 +189,12 @@ fn resize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
                         "Lanczos3",
                     );
                 });
-            if ui.button(app.i18n.t("action-apply", &[])).clicked() {
-                apply = true;
-            }
+            ui.add_space(theme::SPACE_MD);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if primary_button(ui, &app.i18n.t("action-apply", &[])).clicked() {
+                    apply = true;
+                }
+            });
         });
     app.dialog.resize_open = open;
 
@@ -202,17 +235,57 @@ fn convert_dialog(ctx: &egui::Context, app: &mut YImageApp) {
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
+        .default_width(360.0)
         .show(ctx, |ui| {
-            egui::ComboBox::from_label(app.i18n.t("convert-target", &[]))
-                .selected_text(&app.dialog.convert_target)
-                .show_ui(ui, |ui| {
-                    for ext in ["png", "jpg", "webp", "bmp", "tiff", "gif", "avif"] {
-                        ui.selectable_value(&mut app.dialog.convert_target, ext.to_string(), ext);
+            ui.add_space(theme::SPACE_XS);
+            ui.label(
+                RichText::new(app.i18n.t("convert-target", &[]))
+                    .size(theme::FONT_CAPTION),
+            );
+            ui.add_space(theme::SPACE_XS);
+            // Format tiles laid out in a grid — click a tile to pick the
+            // target format. Faster + more visual than a dropdown.
+            let formats = ["png", "jpg", "webp", "bmp", "tiff", "gif", "avif"];
+            egui::Grid::new("format_tiles")
+                .num_columns(4)
+                .spacing([theme::SPACE_SM, theme::SPACE_SM])
+                .show(ui, |ui| {
+                    for (i, ext) in formats.iter().enumerate() {
+                        let selected = app.dialog.convert_target == *ext;
+                        let fill = if selected {
+                            theme::ACCENT
+                        } else {
+                            ui.visuals().widgets.inactive.weak_bg_fill
+                        };
+                        let text_color = if selected {
+                            egui::Color32::WHITE
+                        } else {
+                            ui.visuals().text_color()
+                        };
+                        let r = ui.add(
+                            egui::Button::new(
+                                RichText::new(ext.to_uppercase())
+                                    .size(13.0)
+                                    .color(text_color),
+                            )
+                            .min_size(Vec2::new(66.0, 44.0))
+                            .fill(fill)
+                            .corner_radius(CornerRadius::same(8)),
+                        );
+                        if r.clicked() {
+                            app.dialog.convert_target = ext.to_string();
+                        }
+                        if (i + 1) % 4 == 0 {
+                            ui.end_row();
+                        }
                     }
                 });
-            if ui.button(app.i18n.t("action-save-as", &[])).clicked() {
-                pick_and_save = true;
-            }
+            ui.add_space(theme::SPACE_MD);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if primary_button(ui, &app.i18n.t("action-save-as", &[])).clicked() {
+                    pick_and_save = true;
+                }
+            });
         });
     app.dialog.convert_open = open;
 
@@ -251,7 +324,10 @@ fn optimize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
+        .default_width(380.0)
         .show(ctx, |ui| {
+            ui.add_space(theme::SPACE_XS);
+            ui.spacing_mut().slider_width = 200.0;
             ui.add(
                 egui::Slider::new(&mut app.settings.jpeg_quality, 40..=95)
                     .text(app.i18n.t("optimize-jpeg-quality", &[])),
@@ -264,9 +340,12 @@ fn optimize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
                 egui::Slider::new(&mut app.settings.webp_quality, 40..=95)
                     .text(app.i18n.t("optimize-webp-quality", &[])),
             );
-            if ui.button(app.i18n.t("action-run", &[])).clicked() {
-                run = true;
-            }
+            ui.add_space(theme::SPACE_MD);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if primary_button(ui, &app.i18n.t("action-run", &[])).clicked() {
+                    run = true;
+                }
+            });
         });
     app.dialog.optimize_open = open;
 

@@ -98,6 +98,8 @@ pub struct Settings {
     pub webp_quality: u8,
     #[serde(default)]
     pub thumbs_visible: bool,
+    #[serde(default)]
+    pub recent_files: Vec<PathBuf>,
     /// Global hotkey bindings (action key → HotKey spec string). Persists
     /// across restarts so users only need to set them once.
     #[serde(default, with = "hotkey_map_serde")]
@@ -168,7 +170,8 @@ impl Default for Settings {
             jpeg_quality: 85,
             png_level: 3,
             webp_quality: 85,
-            thumbs_visible: true,
+            thumbs_visible: false,
+            recent_files: Vec::new(),
             #[cfg(all(windows, feature = "capture"))]
             hotkeys: crate::hotkeys::defaults(),
             #[cfg(not(all(windows, feature = "capture")))]
@@ -278,6 +281,13 @@ impl YImageApp {
 
     pub fn active_tab_mut(&mut self) -> Option<&mut Tab> {
         self.tabs.get_mut(self.active_tab)
+    }
+
+    pub fn push_recent(&mut self, path: &Path) {
+        const MAX_RECENT: usize = 8;
+        self.settings.recent_files.retain(|p| p != path);
+        self.settings.recent_files.insert(0, path.to_path_buf());
+        self.settings.recent_files.truncate(MAX_RECENT);
     }
 
     pub fn set_texture_dirty(&mut self) {
@@ -695,6 +705,9 @@ impl YImageApp {
                             .i18n
                             .t("status-loaded", &[("path", path.display().to_string())]);
                     }
+                    if !path.as_os_str().is_empty() {
+                        self.push_recent(&path);
+                    }
                     self.progress = None;
                     self.apply_pending_action();
                     ctx.request_repaint();
@@ -758,19 +771,17 @@ impl eframe::App for YImageApp {
             self.open_path(&path, true);
         }
 
-        // Declaration order matters for egui panel layout:
-        // 1. Top panel  → occupies full width at top.
-        // 1b. Tab bar   → directly below the toolbar.
-        // 2. Bottom panel → occupies full width at bottom (must come before side panels).
-        // 3. Left side panels (outermost → innermost, i.e. tool rail first, then thumbnails).
-        // 4. Right side panel.
-        // 5. CentralPanel → fills whatever remains.
-        ui::toolbar::show(&ctx, self);
-        ui::tabbar::show(&ctx, self);
+        // Declaration order matters for egui panel layout. New minimal stack:
+        // 1. Unified header  — tabs + tools + menu, all on one strip.
+        // 2. Context toolbar — appears directly under the header when a tool
+        //    is active, docked to the canvas.
+        // 3. Status bar      — full-width interactive strip at the bottom.
+        // 4. Thumbnails      — optional bottom filmstrip (hidden by default).
+        // 5. CentralPanel    — viewer fills whatever remains.
+        ui::unified_header::show(&ctx, self);
+        ui::context_toolbar::show(&ctx, self);
         ui::statusbar::show(&ctx, self);
-        ui::toolpanel::show(&ctx, self);
         ui::thumbnails::show(&ctx, self);
-        ui::sidebar::show(&ctx, self);
         ui::viewer::show(&ctx, self);
         ui::dialogs::show(&ctx, self);
 

@@ -66,6 +66,11 @@ prop-modified = Modified
 prop-path = Path
 
 welcome-open = Open an image to get started, or drop one into the window.
+welcome-tagline = Image viewer & editor
+welcome-recent = Recent Files
+welcome-shortcut-hint = Ctrl+O to open
+header-menu = Menu
+filmstrip-toggle = Show Filmstrip
 status-loaded = Loaded { $path }
 status-saved = Saved { $path }
 status-capturing = Capturing...

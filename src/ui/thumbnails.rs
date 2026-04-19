@@ -1,29 +1,29 @@
-// Left-hand folder thumbnail strip.
+// Bottom filmstrip of folder thumbnails.
 //
-// Shows every image in the current folder as a small thumbnail so the user
-// can jump around without a file picker. Thumbnails are generated lazily on
-// background rayon workers and cached in an LRU-ish HashMap keyed by path.
-// The panel is resizable; hide it via View → Thumbnails when you want more
-// canvas space.
+// A horizontal strip of small tiles representing every image in the current
+// folder so the user can jump to siblings without a file picker. Thumbnails
+// are decoded lazily on rayon workers and cached in a HashMap keyed by path.
+// Toggled via View → Thumbnail Panel (default: off to give the canvas the full
+// viewport).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use egui::{Color32, ColorImage, TextureHandle, TextureOptions, Vec2};
+use egui::{Color32, ColorImage, CornerRadius, Sense, Stroke, TextureHandle, TextureOptions, Vec2};
 use parking_lot::Mutex;
 
 use crate::app::YImageApp;
+use crate::ui::theme;
 
-pub const THUMB_MAX_DIM: u32 = 160;
+pub const THUMB_MAX_DIM: u32 = 96;
+const STRIP_HEIGHT: f32 = 92.0;
+const TILE_SIZE: f32 = 64.0;
 
 #[derive(Default)]
 pub struct Thumbnails {
-    /// Finished thumbnails keyed by path → egui texture.
     pub cache: Arc<Mutex<HashMap<PathBuf, TextureHandle>>>,
-    /// Paths currently being decoded on a worker (no duplicate jobs).
     pub pending: Arc<Mutex<HashMap<PathBuf, ()>>>,
-    /// User-controlled visibility.
     pub visible: bool,
 }
 
@@ -32,7 +32,7 @@ impl Thumbnails {
         Self {
             cache: Default::default(),
             pending: Default::default(),
-            visible: true,
+            visible: false,
         }
     }
 }
@@ -42,120 +42,101 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         return;
     }
 
-    egui::SidePanel::left("thumbnails")
-        .resizable(true)
-        .default_width(180.0)
-        .min_width(120.0)
-        .max_width(280.0)
+    egui::TopBottomPanel::bottom("thumbnails_strip")
+        .exact_height(STRIP_HEIGHT)
+        .show_separator_line(true)
         .show(ctx, |ui| {
-            // Header row: title + refresh button.
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.strong(app.i18n.t("thumbs-title", &[]));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .small_button("⟳")
-                        .on_hover_text(app.i18n.t("thumbs-refresh", &[]))
-                        .clicked()
-                    {
-                        if let Some(doc) = app.active_doc() {
-                            if let Some(path) = &doc.path {
-                                let p = path.clone();
-                                app.scan_folder_now(&p);
-                            }
-                        }
-                    }
-                });
-            });
-            ui.separator();
-
             let entries = app.folder_entries.lock().clone();
             if entries.is_empty() {
-                ui.add_space(8.0);
-                ui.weak(app.i18n.t("thumbs-empty", &[]));
+                ui.vertical_centered(|ui| {
+                    ui.add_space(STRIP_HEIGHT * 0.35);
+                    ui.weak(
+                        egui::RichText::new(app.i18n.t("thumbs-empty", &[]))
+                            .size(theme::FONT_CAPTION),
+                    );
+                });
                 return;
             }
 
             let current_path = app.active_doc().and_then(|d| d.path.as_ref()).cloned();
             let mut nav_target: Option<PathBuf> = None;
-            let panel_w = ui.available_width();
-            let thumb_size = Vec2::splat((panel_w - 20.0).clamp(60.0, THUMB_MAX_DIM as f32));
 
-            egui::ScrollArea::vertical()
+            egui::ScrollArea::horizontal()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
-                    for entry in &entries {
-                        let is_current = current_path.as_ref() == Some(entry);
-                        let tex = ensure_thumbnail(ctx, app, entry);
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.horizontal(|ui| {
+                        ui.add_space(4.0);
+                        for entry in &entries {
+                            let is_current = current_path.as_ref() == Some(entry);
+                            let tex = ensure_thumbnail(ctx, app, entry);
 
-                        let accent = super::theme::ACCENT;
-                        let frame = egui::Frame::none()
-                            .inner_margin(egui::Margin::same(4))
-                            .corner_radius(egui::CornerRadius::same(6))
-                            .fill(if is_current {
-                                accent.linear_multiply(0.18)
+                            let (rect, resp) = ui.allocate_exact_size(
+                                Vec2::splat(TILE_SIZE + 6.0),
+                                Sense::click(),
+                            );
+
+                            // Highlight the active tile with an accent frame.
+                            let stroke = if is_current {
+                                Stroke::new(2.0, theme::ACCENT)
+                            } else if resp.hovered() {
+                                Stroke::new(
+                                    1.0,
+                                    ui.visuals().widgets.hovered.fg_stroke.color,
+                                )
+                            } else {
+                                Stroke::NONE
+                            };
+                            let fill = if is_current {
+                                theme::ACCENT.linear_multiply(0.15)
+                            } else if resp.hovered() {
+                                ui.visuals().widgets.hovered.weak_bg_fill
                             } else {
                                 Color32::TRANSPARENT
-                            })
-                            .stroke(if is_current {
-                                egui::Stroke::new(1.5, accent)
-                            } else {
-                                egui::Stroke::NONE
-                            });
+                            };
+                            ui.painter()
+                                .rect_filled(rect, CornerRadius::same(8), fill);
+                            ui.painter().rect_stroke(
+                                rect,
+                                CornerRadius::same(8),
+                                stroke,
+                                egui::StrokeKind::Inside,
+                            );
 
-                        let r = frame
-                            .show(ui, |ui| {
-                                ui.vertical_centered(|ui| {
-                                    match tex {
-                                        Some(t) => {
-                                            ui.add(
-                                                egui::Image::new((t.id(), thumb_size))
-                                                    .fit_to_exact_size(thumb_size),
-                                            );
-                                        }
-                                        None => {
-                                            // Loading placeholder.
-                                            let (rect, _) = ui.allocate_exact_size(
-                                                thumb_size,
-                                                egui::Sense::hover(),
-                                            );
-                                            ui.painter().rect_filled(
-                                                rect,
-                                                egui::CornerRadius::same(4),
-                                                Color32::from_gray(0x28),
-                                            );
-                                            ui.painter().text(
-                                                rect.center(),
-                                                egui::Align2::CENTER_CENTER,
-                                                "…",
-                                                egui::FontId::proportional(16.0),
-                                                Color32::from_gray(100),
-                                            );
-                                        }
-                                    }
-                                    let name =
-                                        entry.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                                    let text_color = if is_current {
-                                        accent
-                                    } else {
-                                        ui.visuals().text_color()
-                                    };
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new(name).small().color(text_color),
-                                        )
-                                        .truncate(),
+                            let inner = rect.shrink(3.0);
+                            match tex {
+                                Some(t) => {
+                                    ui.painter().image(
+                                        t.id(),
+                                        inner,
+                                        egui::Rect::from_min_max(
+                                            egui::pos2(0.0, 0.0),
+                                            egui::pos2(1.0, 1.0),
+                                        ),
+                                        Color32::WHITE,
                                     );
-                                });
-                            })
-                            .response;
+                                }
+                                None => {
+                                    let t = ctx.input(|i| i.time) as f32;
+                                    let pulse: u8 = (20.0 + 20.0 * (t * 2.0).sin().abs()) as u8;
+                                    let base: u8 = if app.settings.theme_dark { 40 } else { 200 };
+                                    ui.painter().rect_filled(
+                                        inner,
+                                        CornerRadius::same(5),
+                                        Color32::from_gray(base.saturating_add(pulse)),
+                                    );
+                                }
+                            }
 
-                        let r = r.interact(egui::Sense::click());
-                        if r.clicked() {
-                            nav_target = Some(entry.clone());
+                            if let Some(name) = entry.file_name().and_then(|s| s.to_str()) {
+                                resp.clone().on_hover_text(name);
+                            }
+                            if resp.clicked() {
+                                nav_target = Some(entry.clone());
+                            }
                         }
-                        ui.add_space(2.0);
-                    }
+                        ui.add_space(4.0);
+                    });
                 });
 
             if let Some(p) = nav_target {
@@ -165,8 +146,6 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         });
 }
 
-/// Return the cached thumbnail for `path`, scheduling a background decode if
-/// one hasn't been started yet. Returns `None` while the decode is in flight.
 fn ensure_thumbnail(
     ctx: &egui::Context,
     app: &YImageApp,

@@ -15,6 +15,94 @@ pub const ACCENT: Color32 = Color32::from_rgb(0x0A, 0x84, 0xFF); // dark-mode bl
 pub const ACCENT_HOVER: Color32 = Color32::from_rgb(0x26, 0x94, 0xFF);
 pub const ACCENT_ACTIVE: Color32 = Color32::from_rgb(0x00, 0x6F, 0xE0);
 
+// Semantic colors — avoid scattered magic hex values across UI files.
+pub const SURFACE_ELEVATED_DARK: Color32 = Color32::from_rgb(0x2C, 0x2C, 0x2E);
+pub const SURFACE_ELEVATED_LIGHT: Color32 = Color32::from_rgb(0xFF, 0xFF, 0xFF);
+pub const TEXT_SECONDARY_DARK: Color32 = Color32::from_rgb(0x8E, 0x8E, 0x93);
+pub const TEXT_SECONDARY_LIGHT: Color32 = Color32::from_rgb(0x6E, 0x6E, 0x73);
+pub const DIVIDER_DARK: Color32 = Color32::from_rgb(0x38, 0x38, 0x3A);
+pub const DIVIDER_LIGHT: Color32 = Color32::from_rgb(0xE5, 0xE5, 0xEA);
+pub const SUCCESS: Color32 = Color32::from_rgb(0x30, 0xD1, 0x58);
+pub const WARNING: Color32 = Color32::from_rgb(0xFF, 0x9F, 0x0A);
+
+// Typography scale.
+pub const FONT_DISPLAY: f32 = 28.0;
+pub const FONT_TITLE: f32 = 16.0;
+pub const FONT_BODY: f32 = 13.0;
+pub const FONT_CAPTION: f32 = 11.5;
+pub const FONT_TINY: f32 = 10.0;
+
+// Spacing tokens.
+pub const SPACE_XS: f32 = 4.0;
+pub const SPACE_SM: f32 = 8.0;
+pub const SPACE_MD: f32 = 12.0;
+pub const SPACE_LG: f32 = 16.0;
+pub const SPACE_XL: f32 = 24.0;
+
+/// Pre-configured card frame for modal dialogs and floating panels.
+pub fn card_frame(dark: bool) -> egui::Frame {
+    let fill = if dark {
+        SURFACE_ELEVATED_DARK
+    } else {
+        SURFACE_ELEVATED_LIGHT
+    };
+    let stroke_color = if dark { DIVIDER_DARK } else { DIVIDER_LIGHT };
+    egui::Frame::none()
+        .fill(fill)
+        .inner_margin(Margin::same(20))
+        .corner_radius(CornerRadius::same(14))
+        .stroke(Stroke::new(1.0, stroke_color))
+        .shadow(Shadow {
+            offset: [0, 8],
+            blur: 24,
+            spread: 0,
+            color: Color32::from_black_alpha(if dark { 140 } else { 40 }),
+        })
+}
+
+/// Frame for the contextual toolbar that docks to the top of the canvas.
+pub fn toolbar_frame(dark: bool) -> egui::Frame {
+    let fill = if dark {
+        Color32::from_rgb(0x24, 0x24, 0x26)
+    } else {
+        Color32::from_rgb(0xF8, 0xF8, 0xFA)
+    };
+    let stroke_color = if dark { DIVIDER_DARK } else { DIVIDER_LIGHT };
+    egui::Frame::none()
+        .fill(fill)
+        .inner_margin(Margin::symmetric(14, 8))
+        .corner_radius(CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: 10,
+            se: 10,
+        })
+        .stroke(Stroke::new(0.5, stroke_color))
+        .shadow(Shadow {
+            offset: [0, 4],
+            blur: 12,
+            spread: 0,
+            color: Color32::from_black_alpha(if dark { 80 } else { 20 }),
+        })
+}
+
+/// Render a small rounded pill badge (e.g. "PNG", "JPEG").
+pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
+    let font = egui::FontId::proportional(FONT_TINY);
+    let text_size = ui.painter().layout_no_wrap(text.to_string(), font.clone(), color).size();
+    let desired = Vec2::new(text_size.x + 10.0, 16.0);
+    let (rect, _) = ui.allocate_exact_size(desired, egui::Sense::hover());
+    let bg = color.linear_multiply(0.15);
+    ui.painter().rect_filled(rect, CornerRadius::same(4), bg);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        font,
+        color,
+    );
+}
+
 /// Apply an Apple-inspired dark theme.
 pub fn apply_dark(ctx: &egui::Context) {
     let mut style = Style::default();
