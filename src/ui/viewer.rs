@@ -158,8 +158,12 @@ fn handle_keyboard(ctx: &egui::Context, app: &mut YImageApp) {
 // ── Welcome screen ─────────────────────────────────────────────────
 
 fn show_welcome(ui: &mut egui::Ui, app: &mut YImageApp) {
+    // Paint a diagonal gradient background (light sky blue → light purple)
+    // across the entire central panel before laying out the welcome content.
+    paint_gradient_background(ui, app.settings.theme_dark);
+
     let avail = ui.available_size();
-    let card_width = 420.0_f32.min(avail.x - 40.0);
+    let card_width = 720.0_f32.min(avail.x - 40.0);
 
     ui.allocate_ui_at_rect(
         Rect::from_center_size(
@@ -168,7 +172,7 @@ fn show_welcome(ui: &mut egui::Ui, app: &mut YImageApp) {
         ),
         |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space(avail.y * 0.22);
+                ui.add_space(avail.y * 0.14);
 
                 // Wordmark.
                 ui.label(
@@ -189,140 +193,86 @@ fn show_welcome(ui: &mut egui::Ui, app: &mut YImageApp) {
 
                 ui.add_space(theme::SPACE_XL);
 
-                // Card with open button + recent files.
-                let frame = theme::card_frame(app.settings.theme_dark);
-                frame.show(ui, |ui| {
-                    ui.set_min_width(card_width - 40.0);
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(theme::SPACE_SM);
+                // Open button.
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new(format!(
+                                "\u{1F4C2}  {}",
+                                app.i18n.t("action-open", &[])
+                            ))
+                            .size(14.0)
+                            .color(Color32::WHITE),
+                        )
+                        .min_size(Vec2::new(200.0, 44.0))
+                        .fill(theme::ACCENT)
+                        .corner_radius(egui::CornerRadius::same(12)),
+                    )
+                    .clicked()
+                {
+                    if let Some(p) = rfd::FileDialog::new()
+                        .add_filter(
+                            "images",
+                            &[
+                                "png", "jpg", "jpeg", "webp", "bmp", "gif", "tif",
+                                "tiff", "avif",
+                            ],
+                        )
+                        .pick_file()
+                    {
+                        app.open_path(&p, true);
+                    }
+                }
 
-                        // Open button.
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    egui::RichText::new(format!(
-                                        "\u{1F4C2}  {}",
-                                        app.i18n.t("action-open", &[])
-                                    ))
-                                    .size(14.0)
-                                    .color(Color32::WHITE),
-                                )
-                                .min_size(Vec2::new(180.0, 40.0))
-                                .fill(theme::ACCENT)
-                                .corner_radius(egui::CornerRadius::same(10)),
-                            )
-                            .clicked()
-                        {
-                            if let Some(p) = rfd::FileDialog::new()
-                                .add_filter(
-                                    "images",
-                                    &[
-                                        "png", "jpg", "jpeg", "webp", "bmp", "gif", "tif",
-                                        "tiff", "avif",
-                                    ],
-                                )
-                                .pick_file()
-                            {
-                                app.open_path(&p, true);
-                            }
-                        }
+                ui.add_space(theme::SPACE_SM);
+                ui.label(
+                    egui::RichText::new(app.i18n.t("welcome-open", &[]))
+                        .size(theme::FONT_CAPTION)
+                        .color(if app.settings.theme_dark {
+                            theme::TEXT_SECONDARY_DARK
+                        } else {
+                            theme::TEXT_SECONDARY_LIGHT
+                        }),
+                );
 
-                        ui.add_space(theme::SPACE_SM);
-                        ui.label(
-                            egui::RichText::new(app.i18n.t("welcome-open", &[]))
-                                .size(theme::FONT_CAPTION)
-                                .color(if app.settings.theme_dark {
-                                    theme::TEXT_SECONDARY_DARK
-                                } else {
-                                    theme::TEXT_SECONDARY_LIGHT
-                                }),
-                        );
+                ui.add_space(theme::SPACE_XL);
 
-                        // Recent files section.
-                        let recents: Vec<_> = app
-                            .settings
-                            .recent_files
-                            .iter()
-                            .filter(|p| p.exists())
-                            .take(5)
-                            .cloned()
-                            .collect();
+                // Horizontal row of recent-file cards.
+                let recents: Vec<_> = app
+                    .settings
+                    .recent_files
+                    .iter()
+                    .filter(|p| p.exists())
+                    .take(6)
+                    .cloned()
+                    .collect();
 
-                        if !recents.is_empty() {
-                            ui.add_space(theme::SPACE_MD);
-                            let divider_color = if app.settings.theme_dark {
-                                theme::DIVIDER_DARK
-                            } else {
-                                theme::DIVIDER_LIGHT
-                            };
-                            let avail_w = ui.available_width();
-                            let (line_rect, _) =
-                                ui.allocate_exact_size(Vec2::new(avail_w, 1.0), Sense::hover());
-                            ui.painter().line_segment(
-                                [line_rect.left_center(), line_rect.right_center()],
-                                Stroke::new(0.5, divider_color),
-                            );
-                            ui.add_space(theme::SPACE_MD);
+                if !recents.is_empty() {
+                    ui.label(
+                        egui::RichText::new(app.i18n.t("welcome-recent", &[]))
+                            .size(theme::FONT_CAPTION)
+                            .strong(),
+                    );
+                    ui.add_space(theme::SPACE_SM);
 
-                            ui.label(
-                                egui::RichText::new(app.i18n.t("welcome-recent", &[]))
-                                    .size(theme::FONT_CAPTION)
-                                    .strong(),
-                            );
-                            ui.add_space(theme::SPACE_XS);
-
-                            let mut open_path = None;
-                            for path in &recents {
-                                let name = path
-                                    .file_name()
-                                    .and_then(|f| f.to_str())
-                                    .unwrap_or("?");
-                                let folder = path
-                                    .parent()
-                                    .and_then(|p| p.file_name())
-                                    .and_then(|f| f.to_str())
-                                    .unwrap_or("");
-
-                                let r = ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(name)
-                                            .size(theme::FONT_BODY),
-                                    );
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            ui.label(
-                                                egui::RichText::new(folder)
-                                                    .size(theme::FONT_CAPTION)
-                                                    .color(if app.settings.theme_dark {
-                                                        theme::TEXT_SECONDARY_DARK
-                                                    } else {
-                                                        theme::TEXT_SECONDARY_LIGHT
-                                                    }),
-                                            );
-                                        },
-                                    );
-                                });
-                                let resp = r.response.interact(Sense::click());
-                                if resp.hovered() {
-                                    ui.painter().rect_filled(
-                                        resp.rect.expand(2.0),
-                                        egui::CornerRadius::same(4),
-                                        theme::ACCENT.linear_multiply(0.1),
-                                    );
+                    let mut open_path = None;
+                    let ctx = ui.ctx().clone();
+                    egui::ScrollArea::horizontal()
+                        .max_width(card_width)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 12.0;
+                                for path in &recents {
+                                    if recent_card(ui, &ctx, app, path).clicked() {
+                                        open_path = Some(path.clone());
+                                    }
                                 }
-                                if resp.clicked() {
-                                    open_path = Some(path.clone());
-                                }
-                            }
-                            if let Some(p) = open_path {
-                                app.open_path(&p, true);
-                            }
-                        }
-
-                        ui.add_space(theme::SPACE_SM);
-                    });
-                });
+                            });
+                        });
+                    if let Some(p) = open_path {
+                        app.open_path(&p, true);
+                    }
+                }
 
                 ui.add_space(theme::SPACE_LG);
                 ui.label(
@@ -338,6 +288,157 @@ fn show_welcome(ui: &mut egui::Ui, app: &mut YImageApp) {
             });
         },
     );
+}
+
+fn paint_gradient_background(ui: &egui::Ui, dark: bool) {
+    // Soft diagonal gradient: top-left light sky blue → bottom-right light
+    // purple. In dark mode we fall back to deeper, desaturated siblings so
+    // the canvas still feels airy without clashing with the UI chrome.
+    let (tl, tr, bl, br) = if dark {
+        (
+            Color32::from_rgb(0x1F, 0x22, 0x2C),
+            Color32::from_rgb(0x22, 0x22, 0x30),
+            Color32::from_rgb(0x22, 0x22, 0x30),
+            Color32::from_rgb(0x28, 0x22, 0x34),
+        )
+    } else {
+        (
+            Color32::from_rgb(0xDE, 0xEF, 0xFF),
+            Color32::from_rgb(0xE8, 0xE6, 0xFF),
+            Color32::from_rgb(0xE6, 0xED, 0xFF),
+            Color32::from_rgb(0xF0, 0xE3, 0xFF),
+        )
+    };
+
+    let rect = ui.max_rect();
+    let mut mesh = egui::Mesh::default();
+    let uv = egui::epaint::WHITE_UV;
+    mesh.vertices.push(egui::epaint::Vertex { pos: rect.left_top(), uv, color: tl });
+    mesh.vertices.push(egui::epaint::Vertex { pos: rect.right_top(), uv, color: tr });
+    mesh.vertices.push(egui::epaint::Vertex { pos: rect.right_bottom(), uv, color: br });
+    mesh.vertices.push(egui::epaint::Vertex { pos: rect.left_bottom(), uv, color: bl });
+    mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+    ui.painter().add(egui::Shape::mesh(mesh));
+}
+
+fn recent_card(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    app: &YImageApp,
+    path: &std::path::Path,
+) -> egui::Response {
+    const CARD_W: f32 = 140.0;
+    const THUMB_H: f32 = 100.0;
+    const LABEL_H: f32 = 34.0;
+    const CARD_H: f32 = THUMB_H + LABEL_H;
+
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(CARD_W, CARD_H), Sense::click());
+    let painter = ui.painter();
+    let radius = egui::CornerRadius::same(10);
+
+    // Card surface.
+    let surface = if app.settings.theme_dark {
+        Color32::from_rgba_unmultiplied(0x2C, 0x2C, 0x2E, 235)
+    } else {
+        Color32::from_rgba_unmultiplied(0xFF, 0xFF, 0xFF, 230)
+    };
+    painter.rect_filled(rect, radius, surface);
+
+    let stroke_color = if resp.hovered() {
+        theme::ACCENT
+    } else if app.settings.theme_dark {
+        theme::DIVIDER_DARK
+    } else {
+        theme::DIVIDER_LIGHT
+    };
+    painter.rect_stroke(
+        rect,
+        radius,
+        Stroke::new(if resp.hovered() { 1.5 } else { 0.5 }, stroke_color),
+        egui::StrokeKind::Inside,
+    );
+
+    // Thumbnail area.
+    let thumb_rect = Rect::from_min_size(rect.min, Vec2::new(CARD_W, THUMB_H));
+    let thumb_bg = if app.settings.theme_dark {
+        Color32::from_rgb(0x1C, 0x1C, 0x1E)
+    } else {
+        Color32::from_rgb(0xF0, 0xEF, 0xF5)
+    };
+    painter.rect_filled(
+        thumb_rect,
+        egui::CornerRadius { nw: 10, ne: 10, sw: 0, se: 0 },
+        thumb_bg,
+    );
+
+    if let Some(tex) = crate::ui::thumbnails::ensure_thumbnail(ctx, app, path) {
+        let [tw, th] = tex.size();
+        let img_ratio = tw as f32 / th.max(1) as f32;
+        let box_ratio = thumb_rect.width() / thumb_rect.height();
+        let inset = 8.0;
+        let inner = thumb_rect.shrink(inset);
+        let draw_size = if img_ratio > box_ratio {
+            Vec2::new(inner.width(), inner.width() / img_ratio)
+        } else {
+            Vec2::new(inner.height() * img_ratio, inner.height())
+        };
+        let draw_rect = Rect::from_center_size(inner.center(), draw_size);
+        painter.image(
+            tex.id(),
+            draw_rect,
+            Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    } else {
+        // Pulsing placeholder while the thumbnail decodes.
+        let t = ctx.input(|i| i.time) as f32;
+        let alpha = ((t * 2.0).sin() * 0.5 + 0.5) * 40.0 + 20.0;
+        painter.rect_filled(
+            thumb_rect.shrink(16.0),
+            egui::CornerRadius::same(6),
+            Color32::from_black_alpha(alpha as u8),
+        );
+    }
+
+    // Filename label.
+    let name = path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("?");
+    let label_rect = Rect::from_min_size(
+        egui::pos2(rect.min.x, rect.min.y + THUMB_H),
+        Vec2::new(CARD_W, LABEL_H),
+    );
+    let text_color = if app.settings.theme_dark {
+        Color32::from_rgb(0xEE, 0xEE, 0xF0)
+    } else {
+        Color32::from_rgb(0x1C, 0x1C, 0x1E)
+    };
+    let elided = elide_middle(name, 18);
+    painter.text(
+        label_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        elided,
+        egui::FontId::proportional(theme::FONT_CAPTION),
+        text_color,
+    );
+
+    resp.on_hover_text(name)
+}
+
+fn elide_middle(s: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
+        return s.to_string();
+    }
+    let keep = max_chars.saturating_sub(1);
+    let head = keep / 2;
+    let tail = keep - head;
+    let mut out: String = chars[..head].iter().collect();
+    out.push('…');
+    out.extend(chars[chars.len() - tail..].iter());
+    out
 }
 
 // ── Checkerboard ───────────────────────────────────────────────────

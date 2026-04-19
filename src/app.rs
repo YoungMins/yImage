@@ -165,7 +165,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             language: crate::i18n::detect_locale(),
-            theme_dark: true,
+            theme_dark: false,
             last_folder: None,
             jpeg_quality: 85,
             png_level: 3,

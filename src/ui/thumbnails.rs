@@ -157,7 +157,7 @@ pub fn show(ctx: &egui::Context, app: &mut YImageApp) {
         });
 }
 
-fn ensure_thumbnail(
+pub(crate) fn ensure_thumbnail(
     ctx: &egui::Context,
     app: &YImageApp,
     path: &std::path::Path,
