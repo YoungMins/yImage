@@ -103,12 +103,13 @@ pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
     );
 }
 
-/// One-time spacing/typography setup. Theme toggles must not touch spacing
-/// — otherwise the layout subtly shifts between light and dark, which is
-/// exactly the kind of side-effect we want to avoid. This is called once at
-/// startup; the per-theme functions only replace `style.visuals` on top of
-/// whatever spacing is already installed.
-fn apply_spacing(style: &mut Style) {
+/// Build the full Style from scratch: default egui style + our Apple
+/// spacing + the requested visuals. Used on startup so every field is in a
+/// known state. Theme toggles must not go through this — they only swap
+/// `visuals` via `style_mut` so no other field (spacing, text styles,
+/// animation times, etc.) can ever drift between light and dark.
+fn build_style(dark: bool) -> Style {
+    let mut style = Style::default();
     style.spacing.item_spacing = Vec2::new(10.0, 8.0);
     style.spacing.button_padding = Vec2::new(14.0, 7.0);
     style.spacing.menu_margin = Margin::symmetric(8, 6);
@@ -118,6 +119,17 @@ fn apply_spacing(style: &mut Style) {
     style.spacing.interact_size = Vec2::new(36.0, 30.0);
     style.spacing.icon_width = 16.0;
     style.spacing.icon_spacing = 6.0;
+    style.visuals = if dark {
+        build_dark_visuals()
+    } else {
+        build_light_visuals()
+    };
+    style
+}
+
+/// Install the full theme, including spacing. Call at startup only.
+pub fn install(ctx: &egui::Context, dark: bool) {
+    ctx.set_style(build_style(dark));
 }
 
 fn build_dark_visuals() -> Visuals {
@@ -193,13 +205,11 @@ fn build_dark_visuals() -> Visuals {
     v
 }
 
-/// Apply an Apple-inspired dark theme — replaces only the visuals so the
-/// previously installed spacing stays put across theme toggles.
+/// Swap to the dark theme at runtime. Only `visuals` is replaced —
+/// spacing, typography, and every other Style field stay exactly as they
+/// were installed, so toggling never shifts the layout.
 pub fn apply_dark(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
-    apply_spacing(&mut style);
-    style.visuals = build_dark_visuals();
-    ctx.set_style(style);
+    ctx.style_mut(|s| s.visuals = build_dark_visuals());
 }
 
 fn build_light_visuals() -> Visuals {
@@ -269,12 +279,8 @@ fn build_light_visuals() -> Visuals {
     v
 }
 
-/// Apply an Apple-inspired light theme (macOS Ventura / Sonoma feel).
-/// Like `apply_dark`, only touches visuals so spacing is frozen across
-/// theme toggles.
+/// Swap to the light theme at runtime. Companion to `apply_dark` — only
+/// the visuals change.
 pub fn apply_light(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
-    apply_spacing(&mut style);
-    style.visuals = build_light_visuals();
-    ctx.set_style(style);
+    ctx.style_mut(|s| s.visuals = build_light_visuals());
 }

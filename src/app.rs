@@ -213,11 +213,10 @@ impl YImageApp {
             .unwrap_or_default();
 
         let i18n = I18n::new(&settings.language);
-        if settings.theme_dark {
-            ui::theme::apply_dark(&cc.egui_ctx);
-        } else {
-            ui::theme::apply_light(&cc.egui_ctx);
-        }
+        // Re-install the full style with the user's saved theme preference.
+        // `main.rs` did a first install to make sure the first frame renders
+        // in dark mode; redo it here with the correct theme.
+        ui::theme::install(&cc.egui_ctx, settings.theme_dark);
 
         let (tx, rx) = crossbeam_channel::unbounded();
 

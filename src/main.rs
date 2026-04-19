@@ -106,7 +106,9 @@ fn main() -> eframe::Result<()> {
             // Install CJK-capable font, theme, and image loaders up-front so the
             // first frame is fully styled.
             ui::setup_fonts(&cc.egui_ctx);
-            ui::theme::apply_dark(&cc.egui_ctx);
+            // Install full style (spacing + visuals). The per-theme functions
+            // below only swap visuals; this call establishes the rest.
+            ui::theme::install(&cc.egui_ctx, true);
             egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(YImageApp::new(
                 cc,
