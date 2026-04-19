@@ -553,15 +553,19 @@ impl YImageApp {
                 self.spawn_capture_screenshot_for_crop(mode);
             }
             CaptureMode::FixedRegion { .. } => {
-                // Always open the overlay so the user can see / adjust the
-                // region. If we have a saved rectangle from a previous
-                // capture it will be pre-drawn on the overlay.
-                self.spawn_capture_screenshot_for_crop(CaptureMode::FixedRegion {
-                    x: 0,
-                    y: 0,
-                    w: 0,
-                    h: 0,
-                });
+                // If we have a saved rectangle from a previous session,
+                // capture it straight away. Otherwise open the overlay so
+                // the user can draw one.
+                if let Some((x, y, w, h)) = self.dialog.fixed_region {
+                    self.spawn_capture_immediate(CaptureMode::FixedRegion { x, y, w, h });
+                } else {
+                    self.spawn_capture_screenshot_for_crop(CaptureMode::FixedRegion {
+                        x: 0,
+                        y: 0,
+                        w: 0,
+                        h: 0,
+                    });
+                }
             }
         }
     }

@@ -393,9 +393,19 @@ fn show_region_crop(ctx: &egui::Context, app: &mut YImageApp) {
                 );
 
                 if response.drag_started() {
-                    if let Some(p) = response.interact_pointer_pos() {
+                    // `drag_started` only fires after egui's drag threshold is
+                    // crossed, so `interact_pointer_pos` is already offset
+                    // from the actual press. Use `press_origin` to snap the
+                    // start back to the exact pixel the user clicked on —
+                    // that's what the magnifier was showing a moment earlier.
+                    let press = vp_ctx
+                        .input(|i| i.pointer.press_origin())
+                        .or_else(|| response.interact_pointer_pos());
+                    if let Some(p) = press {
                         state.drag_start = Some(p);
-                        state.drag_current = Some(p);
+                        state.drag_current = response
+                            .interact_pointer_pos()
+                            .or(Some(p));
                         state.finalised = false;
                     }
                 }
