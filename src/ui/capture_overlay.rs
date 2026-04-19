@@ -47,6 +47,10 @@ pub struct RegionCropState {
     /// `Region` or `FixedRegion` — affects whether the selection is saved
     /// back to `DialogState::fixed_region` on confirm.
     pub mode: CaptureMode,
+    /// Pre-saved fixed region (image-space coords) to show on overlay open.
+    pub preset: Option<(i32, i32, u32, u32)>,
+    /// Reusable texture handle for the magnifier loupe.
+    pub magnifier_tex: Option<egui::TextureHandle>,
 }
 
 impl RegionCropState {
@@ -58,6 +62,8 @@ impl RegionCropState {
             drag_current: None,
             finalised: false,
             mode,
+            preset: None,
+            magnifier_tex: None,
         }
     }
 }
@@ -330,6 +336,24 @@ fn show_region_crop(ctx: &egui::Context, app: &mut YImageApp) {
                 let shot_size = Vec2::new(img_w * scale, img_h * scale);
                 let shot_rect = Rect::from_center_size(screen.center(), shot_size);
 
+                // If a preset fixed region exists, pre-draw the selection so
+                // the user sees the saved rectangle immediately.
+                if state.drag_start.is_none() {
+                    if let Some((px, py, pw, ph)) = state.preset.take() {
+                        let x0 = shot_rect.min.x
+                            + (px as f32 / img_w) * shot_rect.width();
+                        let y0 = shot_rect.min.y
+                            + (py as f32 / img_h) * shot_rect.height();
+                        let x1 = shot_rect.min.x
+                            + ((px + pw as i32) as f32 / img_w) * shot_rect.width();
+                        let y1 = shot_rect.min.y
+                            + ((py + ph as i32) as f32 / img_h) * shot_rect.height();
+                        state.drag_start = Some(Pos2::new(x0, y0));
+                        state.drag_current = Some(Pos2::new(x1, y1));
+                        state.finalised = true;
+                    }
+                }
+
                 let painter = ui.painter().clone();
                 painter.image(
                     tex.id(),
@@ -434,6 +458,25 @@ fn show_region_crop(ctx: &egui::Context, app: &mut YImageApp) {
                             FontId::proportional(12.0),
                             Color32::WHITE,
                         );
+                    }
+                }
+
+                // Magnifier loupe next to the cursor while dragging.
+                if !state.finalised {
+                    if let Some(cursor) = vp_ctx.input(|i| i.pointer.hover_pos()) {
+                        if shot_rect.contains(cursor) {
+                            draw_magnifier(
+                                &painter,
+                                &state.image,
+                                shot_rect,
+                                screen,
+                                cursor,
+                                img_w,
+                                img_h,
+                                vp_ctx,
+                                &mut state.magnifier_tex,
+                            );
+                        }
                     }
                 }
 
@@ -569,6 +612,112 @@ fn selection_to_image_rect(
     let w = ((u1 - u0) * img_w).round() as u32;
     let h = ((v1 - v0) * img_h).round() as u32;
     (x, y, w, h)
+}
+
+/// Draw a magnifier loupe near the cursor showing a zoomed-in view of the
+/// screenshot pixels. Helps the user align the selection to exact pixel edges.
+#[allow(clippy::too_many_arguments)]
+fn draw_magnifier(
+    painter: &egui::Painter,
+    image: &RgbaImage,
+    shot_rect: Rect,
+    screen: Rect,
+    cursor: Pos2,
+    img_w: f32,
+    img_h: f32,
+    vp_ctx: &egui::Context,
+    mag_tex: &mut Option<egui::TextureHandle>,
+) {
+    const RADIUS: i32 = 8;
+    const SIDE: usize = (RADIUS * 2 + 1) as usize;
+    const ZOOM: f32 = 8.0;
+    const LOUPE_PX: f32 = SIDE as f32 * ZOOM;
+    const OFFSET: f32 = 24.0;
+
+    let u = ((cursor.x - shot_rect.min.x) / shot_rect.width()).clamp(0.0, 1.0);
+    let v = ((cursor.y - shot_rect.min.y) / shot_rect.height()).clamp(0.0, 1.0);
+    let ix = (u * img_w) as i32;
+    let iy = (v * img_h) as i32;
+
+    let mut pixels = Vec::with_capacity(SIDE * SIDE);
+    for dy in -RADIUS..=RADIUS {
+        for dx in -RADIUS..=RADIUS {
+            let px = (ix + dx).clamp(0, img_w as i32 - 1) as u32;
+            let py = (iy + dy).clamp(0, img_h as i32 - 1) as u32;
+            let p = image.get_pixel(px, py);
+            pixels.push(Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]));
+        }
+    }
+
+    let color_img = ColorImage {
+        size: [SIDE, SIDE],
+        source_size: egui::vec2(SIDE as f32, SIDE as f32),
+        pixels,
+    };
+    match mag_tex {
+        Some(t) => t.set(color_img, TextureOptions::NEAREST),
+        None => {
+            *mag_tex = Some(vp_ctx.load_texture(
+                "capture-magnifier",
+                color_img,
+                TextureOptions::NEAREST,
+            ));
+        }
+    }
+    let tex_id = mag_tex.as_ref().unwrap().id();
+
+    // Position the loupe to the bottom-right of the cursor; flip if it
+    // would go off-screen.
+    let mut lx = cursor.x + OFFSET;
+    let mut ly = cursor.y + OFFSET;
+    if lx + LOUPE_PX + 4.0 > screen.max.x {
+        lx = cursor.x - OFFSET - LOUPE_PX;
+    }
+    if ly + LOUPE_PX + 24.0 > screen.max.y {
+        ly = cursor.y - OFFSET - LOUPE_PX - 24.0;
+    }
+    let loupe_rect = Rect::from_min_size(Pos2::new(lx, ly), Vec2::splat(LOUPE_PX));
+
+    // Background + image.
+    painter.rect_filled(
+        loupe_rect.expand(3.0),
+        egui::CornerRadius::same(6),
+        Color32::from_black_alpha(200),
+    );
+    painter.image(
+        tex_id,
+        loupe_rect,
+        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        Color32::WHITE,
+    );
+    painter.rect_stroke(
+        loupe_rect,
+        egui::CornerRadius::same(6),
+        Stroke::new(2.0, Color32::from_white_alpha(200)),
+        egui::StrokeKind::Outside,
+    );
+
+    // Crosshair lines through the center pixel.
+    let cx = loupe_rect.center().x;
+    let cy = loupe_rect.center().y;
+    let hair = Color32::from_rgba_unmultiplied(255, 80, 80, 180);
+    painter.line_segment(
+        [Pos2::new(cx, loupe_rect.min.y), Pos2::new(cx, loupe_rect.max.y)],
+        Stroke::new(1.0, hair),
+    );
+    painter.line_segment(
+        [Pos2::new(loupe_rect.min.x, cy), Pos2::new(loupe_rect.max.x, cy)],
+        Stroke::new(1.0, hair),
+    );
+
+    // Coordinate label below the loupe.
+    painter.text(
+        Pos2::new(loupe_rect.center().x, loupe_rect.max.y + 6.0),
+        Align2::CENTER_TOP,
+        format!("{ix}, {iy}"),
+        FontId::proportional(12.0),
+        Color32::WHITE,
+    );
 }
 
 fn crop_rgba(src: &RgbaImage, x: u32, y: u32, w: u32, h: u32) -> anyhow::Result<RgbaImage> {

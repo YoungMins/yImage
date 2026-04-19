@@ -553,19 +553,15 @@ impl YImageApp {
                 self.spawn_capture_screenshot_for_crop(mode);
             }
             CaptureMode::FixedRegion { .. } => {
-                // FixedRegion menu entry: if we have a saved rectangle,
-                // capture it straight away. Otherwise open the overlay
-                // so the user can draw one.
-                if let Some((x, y, w, h)) = self.dialog.fixed_region {
-                    self.spawn_capture_immediate(CaptureMode::FixedRegion { x, y, w, h });
-                } else {
-                    self.spawn_capture_screenshot_for_crop(CaptureMode::FixedRegion {
-                        x: 0,
-                        y: 0,
-                        w: 0,
-                        h: 0,
-                    });
-                }
+                // Always open the overlay so the user can see / adjust the
+                // region. If we have a saved rectangle from a previous
+                // capture it will be pre-drawn on the overlay.
+                self.spawn_capture_screenshot_for_crop(CaptureMode::FixedRegion {
+                    x: 0,
+                    y: 0,
+                    w: 0,
+                    h: 0,
+                });
             }
         }
     }
@@ -730,8 +726,12 @@ impl YImageApp {
                 }
                 #[cfg(all(windows, feature = "capture"))]
                 BgMsg::CaptureScreenshot { image, mode } => {
-                    self.dialog.region_crop =
-                        Some(crate::ui::capture_overlay::RegionCropState::new(image, mode));
+                    let mut state =
+                        crate::ui::capture_overlay::RegionCropState::new(image, mode);
+                    if matches!(mode, crate::capture::CaptureMode::FixedRegion { .. }) {
+                        state.preset = self.dialog.fixed_region;
+                    }
+                    self.dialog.region_crop = Some(state);
                     ctx.request_repaint();
                 }
             }
