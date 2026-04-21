@@ -6,9 +6,9 @@
 
 #define AppName "yImage"
 ; AppVersion may be overridden from the command line:
-;   iscc /DAppVersion=0.2.0 installer\yImage.iss
+;   iscc /DAppVersion=0.3.0 installer\yImage.iss
 #ifndef AppVersion
-  #define AppVersion "0.2.0"
+  #define AppVersion "0.3.0"
 #endif
 #define AppPublisher "Youngmin Kim"
 #define AppURL "https://ko-fi.com/youngminkim"
