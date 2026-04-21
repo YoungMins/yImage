@@ -115,8 +115,12 @@ crop-clear = Clear
 ico-sizes-hint = Select which sizes to include in the .ico file.
 
 optimize-jpeg-quality = JPEG Quality
+optimize-jpeg-hint = Lower = smaller file, more compression artifacts.
 optimize-png-level = PNG Optimization Level
+optimize-png-hint = Lossless compression effort (0=fast, 6=smallest). No quality loss.
 optimize-webp-quality = WebP Quality
+optimize-webp-hint = Lower = smaller file, more compression artifacts.
+optimize-original-size = Original
 
 gif-pick-frames = Pick Frames...
 gif-delay-ms = Frame Delay (ms)

@@ -77,6 +77,15 @@ pub fn assets_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
 }
 
+/// User-writable directory for models downloaded at runtime.
+/// Falls back to the exe-relative assets dir when `directories` cannot
+/// resolve a platform data dir (shouldn't happen on Windows/macOS/Linux).
+pub fn user_models_dir() -> PathBuf {
+    directories::ProjectDirs::from("", "", "yimage")
+        .map(|d| d.data_local_dir().join("models"))
+        .unwrap_or_else(|| assets_dir().join("models"))
+}
+
 fn main() -> eframe::Result<()> {
     // Initialise logging early so panics and start-up spans are captured.
     let _ = tracing_subscriber::fmt()

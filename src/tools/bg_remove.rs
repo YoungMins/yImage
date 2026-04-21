@@ -26,7 +26,13 @@ pub const MODEL_FILE: &str = "u2netp.onnx";
 static SESSION: OnceCell<parking_lot::Mutex<Session>> = OnceCell::new();
 
 pub fn model_path() -> PathBuf {
-    crate::assets_dir().join("models").join(MODEL_FILE)
+    // Prefer the installer-bundled copy next to the exe.
+    let bundled = crate::assets_dir().join("models").join(MODEL_FILE);
+    if bundled.exists() {
+        return bundled;
+    }
+    // Fall back to a user-writable dir for runtime downloads.
+    crate::user_models_dir().join(MODEL_FILE)
 }
 
 #[cfg(feature = "ai")]

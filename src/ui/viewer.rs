@@ -6,8 +6,13 @@ use egui::{Color32, ColorImage, Pos2, Rect, Sense, Stroke, TextureOptions, Vec2}
 
 use crate::app::YImageApp;
 use crate::tools::ToolKind;
+use crate::ui::dialogs::CropHandle;
 
 use super::theme;
+
+const HANDLE_RADIUS: f32 = 5.0;
+const HANDLE_GRAB_RADIUS: f32 = 12.0;
+const RULER_WIDTH: f32 = 22.0;
 
 #[derive(Default)]
 pub struct ViewerState {
@@ -564,31 +569,33 @@ fn handle_tool_input(app: &mut YImageApp, response: &egui::Response, rect: Rect,
             }
         }
         ToolKind::Crop => {
+            // Auto-init crop rect to the full image.
+            if app.dialog.crop_rect.is_none() {
+                let (w, h) = (app.tabs[idx].doc.width(), app.tabs[idx].doc.height());
+                app.dialog.crop_rect = Some((0, 0, w, h));
+            }
             if response.drag_started_by(egui::PointerButton::Primary) {
                 if let Some(pos) = response.interact_pointer_pos() {
-                    if let Some(img_pos) = screen_to_image(pos) {
-                        app.dialog.crop_start = Some(img_pos);
-                        // A fresh drag invalidates any previous confirmed rect.
-                        app.dialog.crop_rect = None;
+                    if let Some(cr) = app.dialog.crop_rect {
+                        app.dialog.crop_drag_handle =
+                            detect_crop_handle(pos, cr, rect, img_size);
                     }
                 }
             }
-            if response.drag_stopped_by(egui::PointerButton::Primary) {
-                if let (Some(start), Some(end)) = (
-                    app.dialog.crop_start,
-                    response.interact_pointer_pos().and_then(screen_to_image),
-                ) {
-                    let iw = app.tabs[idx].doc.width() as f32;
-                    let ih = app.tabs[idx].doc.height() as f32;
-                    let x0 = start.0.min(end.0).clamp(0.0, iw) as u32;
-                    let y0 = start.1.min(end.1).clamp(0.0, ih) as u32;
-                    let x1 = start.0.max(end.0).clamp(0.0, iw) as u32;
-                    let y1 = start.1.max(end.1).clamp(0.0, ih) as u32;
-                    if x1 > x0 && y1 > y0 {
-                        app.dialog.crop_rect = Some((x0, y0, x1 - x0, y1 - y0));
-                    }
+            if response.dragged_by(egui::PointerButton::Primary) {
+                if let (Some(handle), Some(pos), Some(ref mut cr)) =
+                    (app.dialog.crop_drag_handle, response.interact_pointer_pos(), app.dialog.crop_rect.as_mut())
+                {
+                    let rel = pos - rect.min;
+                    let ix = rel.x / (rect.width() / img_size.x);
+                    let iy = rel.y / (rect.height() / img_size.y);
+                    let img_w = app.tabs[idx].doc.width();
+                    let img_h = app.tabs[idx].doc.height();
+                    update_crop_for_handle(cr, handle, ix, iy, img_w, img_h);
                 }
-                app.dialog.crop_start = None;
+            }
+            if response.drag_stopped_by(egui::PointerButton::Primary) {
+                app.dialog.crop_drag_handle = None;
             }
         }
         ToolKind::ObjectRemove => {
@@ -715,55 +722,48 @@ fn draw_overlays(
         }
     }
 
-    // Crop: dim outside the selection and outline the kept region.
+    // Crop: rulers, dim outside selection, crop border, 8 transform handles.
     if app.tool == ToolKind::Crop {
-        let scale_x = rect.width() / img_size.x.max(1.0);
-        let scale_y = rect.height() / img_size.y.max(1.0);
-        let sel_screen = if let (Some(start), Some(hover)) =
-            (app.dialog.crop_start, ctx.pointer_hover_pos())
-        {
-            // Live drag preview.
-            let start_screen =
-                rect.min + Vec2::new(start.0 * scale_x, start.1 * scale_y);
-            Some(Rect::from_two_pos(start_screen, hover).intersect(rect))
-        } else {
-            // Confirmed rectangle from the most recent drag.
-            app.dialog.crop_rect.map(|(x, y, w, h)| {
-                Rect::from_min_size(
-                    rect.min + Vec2::new(x as f32 * scale_x, y as f32 * scale_y),
-                    Vec2::new(w as f32 * scale_x, h as f32 * scale_y),
-                )
-            })
-        };
-        if let Some(sel) = sel_screen {
+        if let Some(cr) = app.dialog.crop_rect {
+            let scale_x = rect.width() / img_size.x.max(1.0);
+            let scale_y = rect.height() / img_size.y.max(1.0);
+            let sel = Rect::from_min_size(
+                rect.min + Vec2::new(cr.0 as f32 * scale_x, cr.1 as f32 * scale_y),
+                Vec2::new(cr.2 as f32 * scale_x, cr.3 as f32 * scale_y),
+            );
+
+            // Dim outside the selection.
             let dim = Color32::from_black_alpha(120);
-            let top = Rect::from_min_max(rect.min, egui::pos2(rect.max.x, sel.min.y));
-            let bottom = Rect::from_min_max(egui::pos2(rect.min.x, sel.max.y), rect.max);
-            let left = Rect::from_min_max(
-                egui::pos2(rect.min.x, sel.min.y),
-                egui::pos2(sel.min.x, sel.max.y),
-            );
-            let right = Rect::from_min_max(
-                egui::pos2(sel.max.x, sel.min.y),
-                egui::pos2(rect.max.x, sel.max.y),
-            );
-            for r in [top, bottom, left, right] {
+            for r in [
+                Rect::from_min_max(rect.min, egui::pos2(rect.max.x, sel.min.y)),
+                Rect::from_min_max(egui::pos2(rect.min.x, sel.max.y), rect.max),
+                Rect::from_min_max(egui::pos2(rect.min.x, sel.min.y), egui::pos2(sel.min.x, sel.max.y)),
+                Rect::from_min_max(egui::pos2(sel.max.x, sel.min.y), egui::pos2(rect.max.x, sel.max.y)),
+            ] {
                 if r.width() > 0.0 && r.height() > 0.0 {
                     painter.rect_filled(r, egui::CornerRadius::ZERO, dim);
                 }
             }
-            painter.rect_stroke(
-                sel,
-                egui::CornerRadius::ZERO,
-                Stroke::new(1.5, Color32::from_rgb(0x00, 0x78, 0xD4)),
-                egui::StrokeKind::Middle,
-            );
-            painter.rect_stroke(
-                sel,
-                egui::CornerRadius::ZERO,
-                Stroke::new(0.5, Color32::WHITE),
-                egui::StrokeKind::Inside,
-            );
+
+            // Rule-of-thirds guides inside selection.
+            let guide_stroke = Stroke::new(0.5, Color32::from_white_alpha(60));
+            for i in 1..3 {
+                let t = i as f32 / 3.0;
+                let vx = sel.min.x + sel.width() * t;
+                painter.line_segment([Pos2::new(vx, sel.min.y), Pos2::new(vx, sel.max.y)], guide_stroke);
+                let hy = sel.min.y + sel.height() * t;
+                painter.line_segment([Pos2::new(sel.min.x, hy), Pos2::new(sel.max.x, hy)], guide_stroke);
+            }
+
+            // Selection border.
+            painter.rect_stroke(sel, egui::CornerRadius::ZERO, Stroke::new(1.5, Color32::from_rgb(0x00, 0x78, 0xD4)), egui::StrokeKind::Middle);
+            painter.rect_stroke(sel, egui::CornerRadius::ZERO, Stroke::new(0.5, Color32::WHITE), egui::StrokeKind::Inside);
+
+            // 8 transform handles.
+            draw_crop_handles(&painter, cr, rect, img_size, app.dialog.crop_drag_handle);
+
+            // Rulers along top and left edges of the image.
+            draw_rulers(&painter, rect, img_size, cr, app.settings.theme_dark);
         }
     }
 
@@ -799,6 +799,234 @@ fn draw_overlays(
             );
         }
     }
+}
+
+// ── Crop helpers ──────────────────────────────────────────────────
+
+fn crop_handle_screen_pos(
+    cr: (u32, u32, u32, u32),
+    handle: CropHandle,
+    rect: Rect,
+    img_size: Vec2,
+) -> Pos2 {
+    let sx = rect.width() / img_size.x.max(1.0);
+    let sy = rect.height() / img_size.y.max(1.0);
+    let (x, y, w, h) = (cr.0 as f32, cr.1 as f32, cr.2 as f32, cr.3 as f32);
+    let (ix, iy) = match handle {
+        CropHandle::NW => (x, y),
+        CropHandle::N  => (x + w * 0.5, y),
+        CropHandle::NE => (x + w, y),
+        CropHandle::W  => (x, y + h * 0.5),
+        CropHandle::E  => (x + w, y + h * 0.5),
+        CropHandle::SW => (x, y + h),
+        CropHandle::S  => (x + w * 0.5, y + h),
+        CropHandle::SE => (x + w, y + h),
+    };
+    rect.min + Vec2::new(ix * sx, iy * sy)
+}
+
+fn detect_crop_handle(
+    pos: Pos2,
+    cr: (u32, u32, u32, u32),
+    rect: Rect,
+    img_size: Vec2,
+) -> Option<CropHandle> {
+    use CropHandle::*;
+    let mut best: Option<(f32, CropHandle)> = None;
+    for h in [NW, N, NE, W, E, SW, S, SE] {
+        let hp = crop_handle_screen_pos(cr, h, rect, img_size);
+        let d = pos.distance(hp);
+        if d <= HANDLE_GRAB_RADIUS && best.map_or(true, |(bd, _)| d < bd) {
+            best = Some((d, h));
+        }
+    }
+    best.map(|(_, h)| h)
+}
+
+fn update_crop_for_handle(
+    cr: &mut (u32, u32, u32, u32),
+    handle: CropHandle,
+    ix: f32,
+    iy: f32,
+    img_w: u32,
+    img_h: u32,
+) {
+    let right = cr.0 + cr.2;
+    let bottom = cr.1 + cr.3;
+    let px = ix.clamp(0.0, img_w as f32) as u32;
+    let py = iy.clamp(0.0, img_h as f32) as u32;
+    match handle {
+        CropHandle::NW => {
+            let nx = px.min(right.saturating_sub(1));
+            let ny = py.min(bottom.saturating_sub(1));
+            *cr = (nx, ny, right - nx, bottom - ny);
+        }
+        CropHandle::N => {
+            let ny = py.min(bottom.saturating_sub(1));
+            *cr = (cr.0, ny, cr.2, bottom - ny);
+        }
+        CropHandle::NE => {
+            let nr = px.max(cr.0 + 1).min(img_w);
+            let ny = py.min(bottom.saturating_sub(1));
+            *cr = (cr.0, ny, nr - cr.0, bottom - ny);
+        }
+        CropHandle::W => {
+            let nx = px.min(right.saturating_sub(1));
+            *cr = (nx, cr.1, right - nx, cr.3);
+        }
+        CropHandle::E => {
+            let nr = px.max(cr.0 + 1).min(img_w);
+            *cr = (cr.0, cr.1, nr - cr.0, cr.3);
+        }
+        CropHandle::SW => {
+            let nx = px.min(right.saturating_sub(1));
+            let nb = py.max(cr.1 + 1).min(img_h);
+            *cr = (nx, cr.1, right - nx, nb - cr.1);
+        }
+        CropHandle::S => {
+            let nb = py.max(cr.1 + 1).min(img_h);
+            *cr = (cr.0, cr.1, cr.2, nb - cr.1);
+        }
+        CropHandle::SE => {
+            let nr = px.max(cr.0 + 1).min(img_w);
+            let nb = py.max(cr.1 + 1).min(img_h);
+            *cr = (cr.0, cr.1, nr - cr.0, nb - cr.1);
+        }
+    }
+}
+
+fn draw_crop_handles(
+    painter: &egui::Painter,
+    cr: (u32, u32, u32, u32),
+    rect: Rect,
+    img_size: Vec2,
+    active: Option<CropHandle>,
+) {
+    use CropHandle::*;
+    for h in [NW, N, NE, W, E, SW, S, SE] {
+        let center = crop_handle_screen_pos(cr, h, rect, img_size);
+        let is_active = active == Some(h);
+        let fill = if is_active {
+            Color32::from_rgb(0x00, 0x78, 0xD4)
+        } else {
+            Color32::WHITE
+        };
+        let r = if matches!(h, NW | NE | SW | SE) {
+            HANDLE_RADIUS + 1.0
+        } else {
+            HANDLE_RADIUS
+        };
+        painter.circle_filled(center, r + 1.0, Color32::from_black_alpha(100));
+        painter.circle_filled(center, r, fill);
+        painter.circle_stroke(center, r, Stroke::new(1.0, Color32::from_rgb(0x00, 0x78, 0xD4)));
+    }
+}
+
+fn draw_rulers(
+    painter: &egui::Painter,
+    rect: Rect,
+    img_size: Vec2,
+    cr: (u32, u32, u32, u32),
+    dark: bool,
+) {
+    let scale_x = rect.width() / img_size.x.max(1.0);
+    let scale_y = rect.height() / img_size.y.max(1.0);
+
+    let intervals: &[u32] = &[1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+    let interval = intervals
+        .iter()
+        .find(|&&c| c as f32 * scale_x >= 50.0)
+        .copied()
+        .unwrap_or(5000);
+
+    let ruler_bg = if dark {
+        Color32::from_rgba_unmultiplied(0x1C, 0x1C, 0x1E, 210)
+    } else {
+        Color32::from_rgba_unmultiplied(0xF0, 0xF0, 0xF0, 210)
+    };
+    let tick_color = if dark { Color32::from_gray(130) } else { Color32::from_gray(100) };
+    let text_color = if dark { Color32::from_gray(170) } else { Color32::from_gray(60) };
+    let mark_color = Color32::from_rgba_unmultiplied(0x00, 0x78, 0xD4, 160);
+    let font = egui::FontId::monospace(9.0);
+
+    // ── Horizontal ruler (top edge) ─────────────────────────
+    let h_ruler = Rect::from_min_size(
+        Pos2::new(rect.min.x, rect.min.y - RULER_WIDTH),
+        Vec2::new(rect.width(), RULER_WIDTH),
+    );
+    painter.rect_filled(h_ruler, egui::CornerRadius::ZERO, ruler_bg);
+    let mut px = 0u32;
+    let end_x = img_size.x as u32;
+    while px <= end_x {
+        let sx = rect.min.x + px as f32 * scale_x;
+        if sx >= h_ruler.min.x && sx <= h_ruler.max.x {
+            painter.line_segment(
+                [Pos2::new(sx, h_ruler.max.y - 7.0), Pos2::new(sx, h_ruler.max.y)],
+                Stroke::new(1.0, tick_color),
+            );
+            painter.text(
+                Pos2::new(sx + 2.0, h_ruler.min.y + 3.0),
+                egui::Align2::LEFT_TOP,
+                format!("{px}"),
+                font.clone(),
+                text_color,
+            );
+        }
+        px += interval;
+    }
+    // Crop boundary markers on horizontal ruler.
+    for edge_px in [cr.0, cr.0 + cr.2] {
+        let sx = rect.min.x + edge_px as f32 * scale_x;
+        painter.line_segment(
+            [Pos2::new(sx, h_ruler.min.y), Pos2::new(sx, h_ruler.max.y)],
+            Stroke::new(2.0, mark_color),
+        );
+    }
+
+    // ── Vertical ruler (left edge) ──────────────────────────
+    let v_ruler = Rect::from_min_size(
+        Pos2::new(rect.min.x - RULER_WIDTH, rect.min.y),
+        Vec2::new(RULER_WIDTH, rect.height()),
+    );
+    painter.rect_filled(v_ruler, egui::CornerRadius::ZERO, ruler_bg);
+    let interval_y = intervals
+        .iter()
+        .find(|&&c| c as f32 * scale_y >= 50.0)
+        .copied()
+        .unwrap_or(5000);
+    let mut py = 0u32;
+    let end_y = img_size.y as u32;
+    while py <= end_y {
+        let sy = rect.min.y + py as f32 * scale_y;
+        if sy >= v_ruler.min.y && sy <= v_ruler.max.y {
+            painter.line_segment(
+                [Pos2::new(v_ruler.max.x - 7.0, sy), Pos2::new(v_ruler.max.x, sy)],
+                Stroke::new(1.0, tick_color),
+            );
+            painter.text(
+                Pos2::new(v_ruler.min.x + 1.0, sy + 2.0),
+                egui::Align2::LEFT_TOP,
+                format!("{py}"),
+                font.clone(),
+                text_color,
+            );
+        }
+        py += interval_y;
+    }
+    for edge_py in [cr.1, cr.1 + cr.3] {
+        let sy = rect.min.y + edge_py as f32 * scale_y;
+        painter.line_segment(
+            [Pos2::new(v_ruler.min.x, sy), Pos2::new(v_ruler.max.x, sy)],
+            Stroke::new(2.0, mark_color),
+        );
+    }
+
+    // Corner square where the two rulers meet.
+    let corner = Rect::from_min_size(
+        Pos2::new(rect.min.x - RULER_WIDTH, rect.min.y - RULER_WIDTH),
+        Vec2::new(RULER_WIDTH, RULER_WIDTH),
+    );
+    painter.rect_filled(corner, egui::CornerRadius::ZERO, ruler_bg);
 }
 
 fn stamp_mask(mask: &mut image::GrayImage, pos: (f32, f32), radius: i32) {

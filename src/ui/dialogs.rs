@@ -31,6 +31,18 @@ fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CropHandle {
+    NW,
+    N,
+    NE,
+    W,
+    E,
+    SW,
+    S,
+    SE,
+}
+
 #[derive(Default)]
 pub struct DialogState {
     // Resize
@@ -65,10 +77,11 @@ pub struct DialogState {
     pub text: TextState,
     pub shape: ShapeState,
     pub shape_start: Option<(f32, f32)>,
-    pub crop_start: Option<(f32, f32)>,
-    /// Confirmed crop rectangle in image coordinates (x, y, w, h).
-    /// Set when the user finishes a drag; cleared on Apply / Cancel.
+    /// Crop rectangle in image coordinates (x, y, w, h).
+    /// Auto-initialized to full image when Crop tool is selected.
     pub crop_rect: Option<(u32, u32, u32, u32)>,
+    /// Which transform handle the user is currently dragging.
+    pub crop_drag_handle: Option<CropHandle>,
     pub obj_mask: Option<GrayImage>,
     pub obj_mask_tex: Option<egui::TextureHandle>,
 
@@ -332,6 +345,12 @@ fn convert_dialog(ctx: &egui::Context, app: &mut YImageApp) {
 fn optimize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
     let mut open = app.dialog.optimize_open;
     let mut run = false;
+
+    let src_kind = app
+        .active_doc()
+        .and_then(|d| d.path.as_deref())
+        .and_then(crate::io::optimize::kind_from_path);
+
     egui::Window::new(app.i18n.t("action-optimize", &[]))
         .open(&mut open)
         .collapsible(false)
@@ -340,18 +359,61 @@ fn optimize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
         .show(ctx, |ui| {
             ui.add_space(theme::SPACE_XS);
             ui.spacing_mut().slider_width = 200.0;
-            ui.add(
-                egui::Slider::new(&mut app.settings.jpeg_quality, 40..=95)
-                    .text(app.i18n.t("optimize-jpeg-quality", &[])),
-            );
-            ui.add(
-                egui::Slider::new(&mut app.settings.png_level, 0..=6)
-                    .text(app.i18n.t("optimize-png-level", &[])),
-            );
-            ui.add(
-                egui::Slider::new(&mut app.settings.webp_quality, 40..=95)
-                    .text(app.i18n.t("optimize-webp-quality", &[])),
-            );
+
+            use crate::io::optimize::OptKind;
+            let show_all = src_kind.is_none();
+            if show_all || src_kind == Some(OptKind::Jpeg) {
+                ui.add(
+                    egui::Slider::new(&mut app.settings.jpeg_quality, 10..=100)
+                        .text(app.i18n.t("optimize-jpeg-quality", &[])),
+                );
+                ui.label(
+                    egui::RichText::new(app.i18n.t("optimize-jpeg-hint", &[]))
+                        .small()
+                        .weak(),
+                );
+                ui.add_space(theme::SPACE_XS);
+            }
+            if show_all || src_kind == Some(OptKind::Png) {
+                ui.add(
+                    egui::Slider::new(&mut app.settings.png_level, 0..=6)
+                        .text(app.i18n.t("optimize-png-level", &[])),
+                );
+                ui.label(
+                    egui::RichText::new(app.i18n.t("optimize-png-hint", &[]))
+                        .small()
+                        .weak(),
+                );
+                ui.add_space(theme::SPACE_XS);
+            }
+            if show_all || src_kind == Some(OptKind::Webp) {
+                ui.add(
+                    egui::Slider::new(&mut app.settings.webp_quality, 10..=100)
+                        .text(app.i18n.t("optimize-webp-quality", &[])),
+                );
+                ui.label(
+                    egui::RichText::new(app.i18n.t("optimize-webp-hint", &[]))
+                        .small()
+                        .weak(),
+                );
+                ui.add_space(theme::SPACE_XS);
+            }
+
+            if let Some(doc) = app.active_doc() {
+                if let Some(ref p) = doc.path {
+                    if let Ok(meta) = std::fs::metadata(p) {
+                        let kb = meta.len() as f64 / 1024.0;
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{}: {:.1} KB",
+                                app.i18n.t("optimize-original-size", &[]),
+                                kb,
+                            ))
+                            .small(),
+                        );
+                    }
+                }
+            }
             ui.add_space(theme::SPACE_MD);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if primary_button(ui, &app.i18n.t("action-run", &[])).clicked() {
@@ -387,10 +449,11 @@ fn optimize_dialog(ctx: &egui::Context, app: &mut YImageApp) {
             rayon::spawn(
                 move || match crate::io::optimize::optimize_to(&image, &out, &opts) {
                     Ok(size) => {
+                        let kb = size as f64 / 1024.0;
                         let _ = tx.send(BgMsg::Info(format!(
-                            "optimized -> {} ({} bytes)",
+                            "optimized -> {} ({:.1} KB)",
                             out.display(),
-                            size
+                            kb
                         )));
                     }
                     Err(e) => {

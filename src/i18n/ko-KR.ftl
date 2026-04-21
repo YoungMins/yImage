@@ -115,8 +115,12 @@ crop-clear = 해제
 ico-sizes-hint = .ico 파일에 포함할 크기를 선택하세요.
 
 optimize-jpeg-quality = JPEG 품질
+optimize-jpeg-hint = 낮을수록 파일 크기가 작아지지만 화질이 떨어집니다.
 optimize-png-level = PNG 최적화 레벨
+optimize-png-hint = 무손실 압축 수준 (0=빠름, 6=최소 크기). 화질 손실 없음.
 optimize-webp-quality = WebP 품질
+optimize-webp-hint = 낮을수록 파일 크기가 작아지지만 화질이 떨어집니다.
+optimize-original-size = 원본 크기
 
 gif-pick-frames = 프레임 선택...
 gif-delay-ms = 프레임 간격 (ms)
