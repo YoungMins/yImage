@@ -146,18 +146,28 @@ fn shape_controls(ui: &mut egui::Ui, app: &mut YImageApp) {
 }
 
 fn crop_controls(ui: &mut egui::Ui, app: &mut YImageApp) {
-    if let Some((_, _, w, h)) = app.dialog.crop_rect {
-        ui.label(
-            RichText::new(format!("{w} × {h}"))
-                .size(theme::FONT_CAPTION)
-                .monospace()
-                .color(Color32::from_gray(180)),
-        );
+    let (max_w, max_h) = app
+        .tabs
+        .get(app.active_tab)
+        .map(|t| (t.doc.width(), t.doc.height()))
+        .unwrap_or((1, 1));
+
+    if let Some(cr) = app.dialog.crop_rect.as_mut() {
+        let caption = |s: &str| RichText::new(s).size(theme::FONT_CAPTION).color(Color32::from_gray(150));
+        ui.label(caption("X"));
+        ui.add(egui::DragValue::new(&mut cr.0).range(0..=max_w.saturating_sub(1)).speed(1.0));
+        ui.label(caption("Y"));
+        ui.add(egui::DragValue::new(&mut cr.1).range(0..=max_h.saturating_sub(1)).speed(1.0));
+        ui.label(caption("W"));
+        ui.add(egui::DragValue::new(&mut cr.2).range(1..=max_w.saturating_sub(cr.0)).speed(1.0));
+        ui.label(caption("H"));
+        ui.add(egui::DragValue::new(&mut cr.3).range(1..=max_h.saturating_sub(cr.1)).speed(1.0));
     }
     let has_rect = app.dialog.crop_rect.is_some();
+    let full_image = app.dialog.crop_rect == Some((0, 0, max_w, max_h));
     if ui
         .add_enabled(
-            has_rect && app.has_doc(),
+            has_rect && app.has_doc() && !full_image,
             egui::Button::new(format!("\u{2702} {}", app.i18n.t("action-apply", &[])))
                 .fill(theme::ACCENT)
                 .corner_radius(CornerRadius::same(8)),
@@ -168,13 +178,14 @@ fn crop_controls(ui: &mut egui::Ui, app: &mut YImageApp) {
     }
     if ui
         .add_enabled(
-            has_rect,
+            has_rect && !full_image,
             egui::Button::new(app.i18n.t("crop-clear", &[])),
         )
         .clicked()
     {
-        app.dialog.crop_rect = None;
-        app.dialog.crop_start = None;
+        // Reset to full image.
+        app.dialog.crop_rect = Some((0, 0, max_w, max_h));
+        app.dialog.crop_drag_handle = None;
     }
     hint(ui, &app.i18n.t("crop-hint", &[]), app.settings.theme_dark);
 }
@@ -188,7 +199,6 @@ fn apply_crop(app: &mut YImageApp) {
         return;
     };
     let (iw, ih) = (tab.doc.width(), tab.doc.height());
-    // Final clamp in case the document changed since the rect was captured.
     let x2 = x.saturating_add(w).min(iw);
     let y2 = y.saturating_add(h).min(ih);
     if x >= iw || y >= ih || x2 <= x || y2 <= y {
@@ -201,7 +211,7 @@ fn apply_crop(app: &mut YImageApp) {
     tab.texture_dirty = true;
     tab.viewer.reset_view = true;
     app.dialog.crop_rect = None;
-    app.dialog.crop_start = None;
+    app.dialog.crop_drag_handle = None;
 }
 
 fn bg_remove_controls(ui: &mut egui::Ui, app: &mut YImageApp) {

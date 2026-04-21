@@ -28,7 +28,11 @@ pub const MODEL_FILE: &str = "lama.onnx";
 static SESSION: OnceCell<parking_lot::Mutex<Session>> = OnceCell::new();
 
 pub fn model_path() -> PathBuf {
-    crate::assets_dir().join("models").join(MODEL_FILE)
+    let bundled = crate::assets_dir().join("models").join(MODEL_FILE);
+    if bundled.exists() {
+        return bundled;
+    }
+    crate::user_models_dir().join(MODEL_FILE)
 }
 
 #[cfg(feature = "ai")]
