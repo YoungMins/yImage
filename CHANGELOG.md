@@ -7,6 +7,38 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-21
+
+Editing & export release. Adds a crop tool with precision handles, ICO
+export for icon creation, and several quality-of-life fixes.
+
+### Added
+- **Crop tool** with 8 transform handles (corners + edge midpoints),
+  rulers with auto-scaled tick marks, rule-of-thirds guides, and
+  X / Y / W / H numeric inputs in the context toolbar.
+- **ICO export** — multi-resolution `.ico` files (16 / 32 / 48 / 256)
+  from any loaded image, available via the File menu and the Convert
+  dialog.
+- **User-writable model directory** — AI models downloaded at runtime
+  are now stored in `%LOCALAPPDATA%/yimage/models/` instead of
+  `Program Files`, fixing permission errors on standard user accounts.
+
+### Changed
+- Optimisation dialog now detects the source format and shows only the
+  relevant quality / level slider, with hint text explaining what each
+  control does. Original file size is displayed for reference.
+- JPEG and WebP quality slider range widened from 40–95 to 10–100 for
+  more visible compression control.
+- Optimisation result message shows human-readable KB instead of raw
+  byte count.
+
+### Fixed
+- Changing the JPEG / WebP quality or PNG level slider now produces
+  visibly different output sizes (previously all three sliders were
+  shown regardless of format, confusing which one applied).
+- AI model download no longer fails with "Access Denied" on Windows
+  when the app is installed under `C:\Program Files`.
+
 ## [0.2.0] - 2026-04-19
 
 A performance-focused release. Large folders, big photos, and arrow-key
@@ -72,6 +104,7 @@ First public build. Fast Windows image viewer + editor with:
 - GIF creation from image sequences.
 - Trilingual UI — English / 한국어 / 日本語.
 
-[Unreleased]: https://github.com/youngmins/yimage/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/youngmins/yimage/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/youngmins/yimage/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/youngmins/yimage/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/youngmins/yimage/releases/tag/v0.1.0
